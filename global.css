@@ -31,7 +31,18 @@
 
   /* Ink — dark surface used by onboarding-style screens (welcome, onboarding) */
   --color-ink: #1a1a1a;
+  --color-ink-surface: #2c2c2a;
   --color-ink-secondary: #c3c2b8;
+
+  /* Per-permission tints — designs/3_permission_screen.png, one-off illustrative colors */
+  --color-permission-calendar-bg: #e8f1fa;
+  --color-permission-calendar-icon: #1e4378;
+  --color-permission-microphone-bg: #f8efdc;
+  --color-permission-microphone-icon: #7e521e;
+  --color-permission-notifications-bg: #f8ede8;
+  --color-permission-notifications-icon: #8e4227;
+  --color-permission-privacy-bg: #e5f5ef;
+  --color-permission-privacy-icon: #224f42;
 
   /* Mascot — keep in sync with AGENTS.md, distinct from primary palette */
   --color-mascot-face: #fce8c8;

@@ -40,7 +40,7 @@ export default function Welcome() {
 
         <View className="gap-4">
           <Pressable
-            onPress={() => router.back()}
+            onPress={() => router.push("/onboarding")}
             className="h-14 items-center justify-center rounded-2xl bg-amber active:opacity-80"
           >
             <Text className="text-h3 text-mascot-features">Get started</Text>

@@ -8,7 +8,10 @@ import {
 import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
+
+import { getDb } from "@/db/client";
+import { seedDevData } from "@/db/seed";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -18,14 +21,21 @@ export default function RootLayout() {
     Nunito_600SemiBold,
     Nunito_700Bold,
   });
+  const [dbReady, setDbReady] = useState(false);
 
   useEffect(() => {
-    if (fontsLoaded || fontError) {
+    getDb()
+      .then(() => seedDevData())
+      .then(() => setDbReady(true));
+  }, []);
+
+  useEffect(() => {
+    if ((fontsLoaded || fontError) && dbReady) {
       SplashScreen.hideAsync();
     }
-  }, [fontsLoaded, fontError]);
+  }, [fontsLoaded, fontError, dbReady]);
 
-  if (!fontsLoaded && !fontError) {
+  if ((!fontsLoaded && !fontError) || !dbReady) {
     return null;
   }
 

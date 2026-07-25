@@ -25,6 +25,10 @@ export default function Index() {
         View welcome screen →
       </Link>
 
+      <Link href="/permissions" className="text-body-lg text-amber">
+        View permissions screen →
+      </Link>
+
       <View className="gap-2">
         <Text className="text-h2 text-text-primary">Typography</Text>
         <Text className="text-h1 text-text-primary">H1 — Screen title</Text>
