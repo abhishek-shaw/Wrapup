@@ -4,9 +4,9 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
 import { ActivityIndicator, SafeAreaView, Text, View } from "react-native";
 
+import { images } from "@/constants/images";
 import { getMeeting, updateMeetingStatus } from "@/db/queries/meetings";
 import { indexMeeting } from "@/db/queries/search";
-import { images } from "@/constants/images";
 import { colors } from "@/theme";
 
 const STEPS = ["Transcribing audio", "Writing the summary", "Finding action items"];
@@ -19,17 +19,22 @@ export default function Processing() {
   useEffect(() => {
     if (currentStep >= STEPS.length) {
       const finish = async () => {
-        await updateMeetingStatus(id, "ready");
-        const meeting = await getMeeting(id);
-        if (meeting) {
-          await indexMeeting({
-            meetingId: id,
-            title: meeting.title,
-            summaryText: "",
-            transcriptText: "",
-          });
+        try {
+          await updateMeetingStatus(id, "ready");
+          const meeting = await getMeeting(id);
+          if (meeting) {
+            await indexMeeting({
+              meetingId: id,
+              title: meeting.title,
+              summaryText: "",
+              transcriptText: "",
+            });
+          }
+        } catch (error) {
+          // surface error / retry option here
+        } finally {
+          router.replace(`/meeting/${id}`);
         }
-        router.replace(`/meeting/${id}`);
       };
       const timeout = setTimeout(finish, 500);
       return () => clearTimeout(timeout);

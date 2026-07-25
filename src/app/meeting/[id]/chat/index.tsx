@@ -53,7 +53,12 @@ export default function MeetingChat() {
     };
     setMessages((prev) => [...prev, message]);
     setDraft("");
-    await createChatMessage({ id: message.id, meetingId: id, role: "user", text: trimmed });
+    try {
+      await createChatMessage({ id: message.id, meetingId: id, role: "user", text: trimmed });
+    } catch (error) {
+      setMessages((prev) => prev.filter((m) => m.id !== message.id));
+      // surface error to user here
+    }
   };
 
   return (
