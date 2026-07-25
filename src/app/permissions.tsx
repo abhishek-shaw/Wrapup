@@ -4,10 +4,12 @@ import React from "react";
 import { Pressable, SafeAreaView, Text, View } from "react-native";
 
 import { PermissionCard } from "@/components/permission-card";
+import { useSettingsStore } from "@/store/settings";
 import { colors } from "@/theme";
 
 export default function Permissions() {
   const router = useRouter();
+  const completeOnboarding = useSettingsStore((state) => state.completeOnboarding);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.ink.background }}>
@@ -54,7 +56,10 @@ export default function Permissions() {
 
         <View className="gap-3">
           <Pressable
-            onPress={() => router.replace("/today")}
+            onPress={async () => {
+              await completeOnboarding();
+              router.replace("/today");
+            }}
             className="h-12 items-center justify-center rounded-2xl bg-amber active:opacity-80"
           >
             <Text className="text-h3 text-mascot-features">Continue</Text>

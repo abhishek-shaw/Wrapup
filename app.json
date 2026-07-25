@@ -34,7 +34,13 @@
           "imageWidth": 76
         }
       ],
-      "expo-sqlite"
+      "expo-sqlite",
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "Wrapup reads your calendar so it can show today's meetings and offer to record them."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
