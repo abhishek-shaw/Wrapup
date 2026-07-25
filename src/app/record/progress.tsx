@@ -17,22 +17,24 @@ function formatDuration(totalSeconds: number) {
 export default function RecordingProgress() {
   const router = useRouter();
   const { title } = useLocalSearchParams<{ title?: string }>();
-  const meetingTitle = title ?? "New recording";
   const [seconds, setSeconds] = useState(0);
   const [barHeights, setBarHeights] = useState<number[]>(Array(BAR_COUNT).fill(12));
-  const [meetingId] = useState(() => generateId());
   const [stopping, setStopping] = useState(false);
-  const meetingCreated = useRef<Promise<void> | null>(null);
 
-  useEffect(() => {
-    meetingCreated.current = createMeeting({
-      id: meetingId,
-      title: meetingTitle,
-      source: "manual_dictation",
-      startedAt: new Date().toISOString(),
-      status: "recording",
-    });
-  }, [meetingId, meetingTitle]);
+  // Create meeting ID and promise synchronously to avoid race condition
+  const meetingData = useRef<{ id: string; creationPromise: Promise<void> }>(
+    (() => {
+      const id = generateId();
+      const creationPromise = createMeeting({
+        id,
+        title: title ?? "New recording",
+        source: "manual_dictation",
+        startedAt: new Date().toISOString(),
+        status: "recording",
+      });
+      return { id, creationPromise };
+    })(),
+  );
 
   useEffect(() => {
     const interval = setInterval(() => setSeconds((prev) => prev + 1), 1000);
@@ -49,9 +51,14 @@ export default function RecordingProgress() {
   const stopRecording = async () => {
     if (stopping) return;
     setStopping(true);
-    await meetingCreated.current;
-    await updateMeetingStatus(meetingId, "processing");
-    router.replace(`/record/processing?id=${meetingId}`);
+    try {
+      await meetingData.current.creationPromise;
+      await updateMeetingStatus(meetingData.current.id, "processing");
+      router.replace(`/record/processing?id=${meetingData.current.id}`);
+    } catch {
+      setStopping(false);
+      // surface error to user here
+    }
   };
 
   return (
@@ -67,7 +74,7 @@ export default function RecordingProgress() {
         <View className="items-center gap-6">
           <View className="items-center gap-1">
             <Text className="text-display text-white">{formatDuration(seconds)}</Text>
-            <Text className="text-body-lg text-ink-secondary">{meetingTitle}</Text>
+            <Text className="text-body-lg text-ink-secondary">{title ?? "New recording"}</Text>
           </View>
 
           <View className="h-16 flex-row items-end gap-2">

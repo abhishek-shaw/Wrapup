@@ -82,7 +82,12 @@ export default function ChooseModel() {
 
         <View className="gap-3">
           <Pressable
-            onPress={() => router.push("/settings/download-model")}
+            onPress={() =>
+              router.push({
+                pathname: "/settings/download-model",
+                params: { tier: selected, wifiOnly: wifiOnly.toString() },
+              })
+            }
             className="h-14 items-center justify-center rounded-2xl bg-amber active:opacity-80"
           >
             <Text className="text-h3 text-mascot-features">Download and continue</Text>

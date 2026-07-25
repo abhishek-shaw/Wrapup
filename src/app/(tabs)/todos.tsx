@@ -1,3 +1,4 @@
+import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
 import { SafeAreaView, SectionList, Text, View } from "react-native";
 
@@ -20,6 +21,7 @@ function formatDueLabel(dueDate: string | null): string {
 }
 
 export default function Todos() {
+  const router = useRouter();
   const todos = useTodosStore((state) => state.todos);
   const loaded = useTodosStore((state) => state.loaded);
   const load = useTodosStore((state) => state.load);
@@ -55,7 +57,7 @@ export default function Todos() {
             title="No todos yet"
             description="Action items from your recorded meetings will show up here automatically."
             ctaLabel="Start your first recording"
-            onPressCta={() => {}}
+            onPressCta={() => router.push("/record/consent")}
           />
         ) : (
           <SectionList

@@ -20,15 +20,43 @@ export default function MeetingChat() {
   const [meeting, setMeeting] = useState<Meeting | null | undefined>(undefined);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const loadData = useCallback(async () => {
+    try {
+      setError(null);
+      const [meetingData, messagesData] = await Promise.all([getMeeting(id), listChatMessages(id)]);
+      setMeeting(meetingData);
+      setMessages(messagesData);
+    } catch {
+      setError("Failed to load meeting data");
+    }
+  }, [id]);
 
   useFocusEffect(
     useCallback(() => {
-      getMeeting(id).then(setMeeting);
-      listChatMessages(id).then(setMessages);
-    }, [id]),
+      loadData();
+    }, [loadData]),
   );
 
   if (meeting === undefined) return null;
+
+  if (error) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.ink.background }}>
+        <View className="flex-1 items-center justify-center gap-4 px-8">
+          <Text className="text-h2 text-white">Error loading meeting</Text>
+          <Text className="text-center text-body-lg text-ink-secondary">{error}</Text>
+          <Pressable
+            onPress={() => loadData()}
+            className="h-12 items-center justify-center rounded-2xl bg-amber px-6 active:opacity-80"
+          >
+            <Text className="text-h3 text-mascot-features">Retry</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (!meeting) {
     return (
@@ -55,7 +83,7 @@ export default function MeetingChat() {
     setDraft("");
     try {
       await createChatMessage({ id: message.id, meetingId: id, role: "user", text: trimmed });
-    } catch (error) {
+    } catch {
       setMessages((prev) => prev.filter((m) => m.id !== message.id));
       // surface error to user here
     }
