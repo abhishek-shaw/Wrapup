@@ -16,21 +16,49 @@ export default function MeetingSummary() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [meeting, setMeeting] = useState<Meeting | null | undefined>(undefined);
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const allTodos = useTodosStore((state) => state.todos);
   const loadTodos = useTodosStore((state) => state.load);
   const toggleTodo = useTodosStore((state) => state.toggle);
   const actionItems = allTodos.filter((todo) => todo.meetingId === id);
 
+  const loadData = useCallback(async () => {
+    try {
+      setError(null);
+      const [meetingData, summaryData] = await Promise.all([getMeeting(id), getSummary(id)]);
+      setMeeting(meetingData);
+      setSummary(summaryData);
+      await loadTodos();
+    } catch {
+      setError("Failed to load meeting data");
+    }
+  }, [id, loadTodos]);
+
   useFocusEffect(
     useCallback(() => {
-      getMeeting(id).then(setMeeting);
-      getSummary(id).then(setSummary);
-      loadTodos();
-    }, [id, loadTodos]),
+      loadData();
+    }, [loadData]),
   );
 
   if (meeting === undefined) return null;
+
+  if (error) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.ink.background }}>
+        <View className="flex-1 items-center justify-center gap-4 px-8">
+          <Text className="text-h2 text-white">Error loading meeting</Text>
+          <Text className="text-center text-body-lg text-ink-secondary">{error}</Text>
+          <Pressable
+            onPress={() => loadData()}
+            className="h-12 items-center justify-center rounded-2xl bg-amber px-6 active:opacity-80"
+          >
+            <Text className="text-h3 text-mascot-features">Retry</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (!meeting) {
     return (
