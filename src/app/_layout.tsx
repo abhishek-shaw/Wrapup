@@ -12,6 +12,7 @@ import React, { useEffect, useState } from "react";
 
 import { getDb } from "@/db/client";
 import { seedDevData } from "@/db/seed";
+import { useSettingsStore } from "@/store/settings";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -22,20 +23,25 @@ export default function RootLayout() {
     Nunito_700Bold,
   });
   const [dbReady, setDbReady] = useState(false);
+  const onboardingComplete = useSettingsStore((state) => state.onboardingComplete);
+  const loadOnboardingStatus = useSettingsStore((state) => state.loadOnboardingStatus);
 
   useEffect(() => {
     getDb()
       .then(() => seedDevData())
       .then(() => setDbReady(true));
-  }, []);
+    loadOnboardingStatus();
+  }, [loadOnboardingStatus]);
+
+  const ready = (fontsLoaded || !!fontError) && dbReady && onboardingComplete !== null;
 
   useEffect(() => {
-    if ((fontsLoaded || fontError) && dbReady) {
+    if (ready) {
       SplashScreen.hideAsync();
     }
-  }, [fontsLoaded, fontError, dbReady]);
+  }, [ready]);
 
-  if ((!fontsLoaded && !fontError) || !dbReady) {
+  if (!ready) {
     return null;
   }
 

@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Stack, useRouter } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import React from "react";
 import { Pressable, Text, View } from "react-native";
 
@@ -7,6 +7,11 @@ import { colors } from "@/theme";
 
 export default function RecordingConsent() {
   const router = useRouter();
+  const { title, calendarEventId, source } = useLocalSearchParams<{
+    title?: string;
+    calendarEventId?: string;
+    source?: string;
+  }>();
 
   return (
     <View className="flex-1 items-center justify-center bg-black/70 px-6">
@@ -33,7 +38,16 @@ export default function RecordingConsent() {
 
         <View className="gap-3">
           <Pressable
-            onPress={() => router.replace("/record/progress")}
+            onPress={() =>
+              router.replace({
+                pathname: "/record/progress",
+                params: {
+                  ...(title ? { title } : {}),
+                  ...(calendarEventId ? { calendarEventId } : {}),
+                  ...(source ? { source } : {}),
+                },
+              })
+            }
             className="h-14 items-center justify-center rounded-2xl bg-white active:opacity-80"
           >
             <Text className="text-h3 text-text-primary">Start recording</Text>

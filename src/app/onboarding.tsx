@@ -1,16 +1,23 @@
 import { useRouter } from "expo-router";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Pressable, SafeAreaView, Switch, Text, TextInput, View } from "react-native";
 
 import { SettingRow } from "@/components/setting-row";
+import { useSettingsStore } from "@/store/settings";
 import { colors } from "@/theme";
 
 export default function Onboarding() {
   const router = useRouter();
   const [name, setName] = useState("");
-  const [calendarConnected, setCalendarConnected] = useState(false);
   const [autoRecord, setAutoRecord] = useState(true);
   const [remindTodos, setRemindTodos] = useState(true);
+  const calendarConnected = useSettingsStore((state) => state.calendarConnected);
+  const loadCalendarStatus = useSettingsStore((state) => state.loadCalendarStatus);
+  const connectCalendar = useSettingsStore((state) => state.connectCalendar);
+
+  useEffect(() => {
+    loadCalendarStatus();
+  }, [loadCalendarStatus]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.ink.background }}>
@@ -43,7 +50,8 @@ export default function Onboarding() {
                 description="So meetings show up automatically"
                 control={
                   <Pressable
-                    onPress={() => setCalendarConnected(true)}
+                    onPress={() => connectCalendar()}
+                    disabled={calendarConnected === true}
                     className="rounded-xl border border-white/20 px-4 py-2 active:opacity-70"
                   >
                     <Text className="text-body-sm text-white">

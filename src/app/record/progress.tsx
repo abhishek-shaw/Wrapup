@@ -16,7 +16,11 @@ function formatDuration(totalSeconds: number) {
 
 export default function RecordingProgress() {
   const router = useRouter();
-  const { title } = useLocalSearchParams<{ title?: string }>();
+  const { title, calendarEventId, source } = useLocalSearchParams<{
+    title?: string;
+    calendarEventId?: string;
+    source?: string;
+  }>();
   const [seconds, setSeconds] = useState(0);
   const [barHeights, setBarHeights] = useState<number[]>(Array(BAR_COUNT).fill(12));
   const [stopping, setStopping] = useState(false);
@@ -28,7 +32,8 @@ export default function RecordingProgress() {
       const creationPromise = createMeeting({
         id,
         title: title ?? "New recording",
-        source: "manual_dictation",
+        source: source === "calendar_meeting" ? "calendar_meeting" : "manual_dictation",
+        calendarEventId: calendarEventId ?? null,
         startedAt: new Date().toISOString(),
         status: "recording",
       });

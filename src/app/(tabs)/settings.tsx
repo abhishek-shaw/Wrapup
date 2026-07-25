@@ -1,15 +1,23 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Pressable, SafeAreaView, ScrollView, Switch, Text, View } from "react-native";
 
 import { SettingRow } from "@/components/setting-row";
+import { useSettingsStore } from "@/store/settings";
 import { colors } from "@/theme";
 
 export default function Settings() {
   const router = useRouter();
   const [autoRecord, setAutoRecord] = useState(true);
   const [requireFaceId, setRequireFaceId] = useState(false);
+  const calendarConnected = useSettingsStore((state) => state.calendarConnected);
+  const loadCalendarStatus = useSettingsStore((state) => state.loadCalendarStatus);
+  const connectCalendar = useSettingsStore((state) => state.connectCalendar);
+
+  useEffect(() => {
+    loadCalendarStatus();
+  }, [loadCalendarStatus]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.ink.background }}>
@@ -53,7 +61,18 @@ export default function Settings() {
             <SettingRow
               icon="calendar-outline"
               title="Calendar access"
-              control={<Text className="text-body-md text-ink-secondary">Connected</Text>}
+              control={
+                calendarConnected ? (
+                  <Text className="text-body-md text-ink-secondary">Connected</Text>
+                ) : (
+                  <Pressable
+                    onPress={() => connectCalendar()}
+                    className="rounded-xl border border-white/20 px-4 py-2 active:opacity-70"
+                  >
+                    <Text className="text-body-sm text-white">Connect</Text>
+                  </Pressable>
+                )
+              }
             />
           </View>
           <View className="border-b border-white/10">
