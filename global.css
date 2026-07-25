@@ -3,3 +3,81 @@
 @import "tailwindcss/utilities.css";
 
 @import "nativewind/theme";
+
+/**
+ * Wrapup design tokens — source of truth: designs/0_design_system.png
+ * Kept in sync with src/theme/colors.ts and src/theme/typography.ts.
+ */
+@theme {
+  --font-sans: "Nunito_400Regular";
+
+  /* Primary */
+  --color-amber: #ef9f27;
+  --color-deep-amber: #ba7517;
+  --color-coral: #d85a30;
+  --color-cream: #fce8c8;
+
+  /* Semantic */
+  --color-success: #3b8b4e;
+  --color-warning: #fac775;
+  --color-error: #e24b4a;
+  --color-privacy: #0f6e56;
+
+  /* Neutrals */
+  --color-text-primary: #2c2c2a;
+  --color-text-secondary: #85807a;
+  --color-border: #e5e1d8;
+  --color-background: #faf8f3;
+
+  /* Mascot — keep in sync with AGENTS.md, distinct from primary palette */
+  --color-mascot-face: #fce8c8;
+  --color-mascot-ears: #d8791c;
+  --color-mascot-features: #3d2a16;
+}
+
+/**
+ * Typography scale — each utility bundles font-family + size + line-height
+ * together, since React Native selects a static font file per weight rather
+ * than synthesizing bold/semibold from a single family (unlike web).
+ */
+@utility text-h1 {
+  font-family: "Nunito_700Bold";
+  font-size: 28px;
+  line-height: 34px;
+}
+
+@utility text-h2 {
+  font-family: "Nunito_600SemiBold";
+  font-size: 20px;
+  line-height: 26px;
+}
+
+@utility text-h3 {
+  font-family: "Nunito_600SemiBold";
+  font-size: 17px;
+  line-height: 22px;
+}
+
+@utility text-body-lg {
+  font-family: "Nunito_400Regular";
+  font-size: 15px;
+  line-height: 21px;
+}
+
+@utility text-body-md {
+  font-family: "Nunito_400Regular";
+  font-size: 14px;
+  line-height: 20px;
+}
+
+@utility text-body-sm {
+  font-family: "Nunito_400Regular";
+  font-size: 12px;
+  line-height: 17px;
+}
+
+@utility text-caption {
+  font-family: "Nunito_400Regular";
+  font-size: 11px;
+  line-height: 15px;
+}
