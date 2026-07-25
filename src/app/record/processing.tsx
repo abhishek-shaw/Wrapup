@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, SafeAreaView, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, SafeAreaView, Text, View } from "react-native";
 
 import { images } from "@/constants/images";
 import { getMeeting, updateMeetingStatus } from "@/db/queries/meetings";
@@ -15,33 +15,75 @@ export default function Processing() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [currentStep, setCurrentStep] = useState(0);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (currentStep >= STEPS.length) {
+      let isMounted = true;
       const finish = async () => {
         try {
-          await updateMeetingStatus(id, "ready");
+          // TODO: Replace empty strings with actual ASR/LLM-generated content
+          // when whisper.rn and llama.rn integration is complete.
+          // For now, these are placeholders until the actual transcription
+          // and summarization pipeline is implemented.
+          const summaryText = "";
+          const transcriptText = "";
+
           const meeting = await getMeeting(id);
           if (meeting) {
             await indexMeeting({
               meetingId: id,
               title: meeting.title,
-              summaryText: "",
-              transcriptText: "",
+              summaryText,
+              transcriptText,
             });
           }
-        } catch (error) {
-          // surface error / retry option here
-        } finally {
-          router.replace(`/meeting/${id}`);
+          // Only update to "ready" after indexing completes successfully
+          await updateMeetingStatus(id, "ready");
+          if (isMounted) {
+            router.replace(`/meeting/${id}`);
+          }
+        } catch {
+          await updateMeetingStatus(id, "failed").catch(() => {});
+          if (isMounted) {
+            setError("Failed to process meeting");
+          }
         }
       };
-      const timeout = setTimeout(finish, 500);
-      return () => clearTimeout(timeout);
+      // Note: intentionally not clearing this timeout on unmount — the
+      // finalize step (persist + index + mark ready) must run even if the
+      // user navigates away before it fires.
+      setTimeout(finish, 500);
+      return () => {
+        isMounted = false;
+      };
     }
     const timeout = setTimeout(() => setCurrentStep((prev) => prev + 1), 1500);
     return () => clearTimeout(timeout);
   }, [currentStep, id, router]);
+
+  if (error) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.ink.background }}>
+        <View className="flex-1 items-center justify-center gap-6 px-8">
+          <Image source={images.mascotLogo} style={{ width: 96, height: 96 }} contentFit="contain" />
+          <View className="items-center gap-2">
+            <Text className="text-center text-h1 text-white">Processing failed</Text>
+            <Text className="text-center text-body-lg text-ink-secondary">{error}</Text>
+          </View>
+          <Pressable
+            onPress={() => {
+              setError(null);
+              setCurrentStep(0);
+            }}
+            className="h-12 items-center justify-center rounded-2xl bg-amber px-6 active:opacity-80"
+          >
+            <Text className="text-h3 text-mascot-features">Retry</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.ink.background }}>

@@ -1,19 +1,36 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
 import { Pressable, SafeAreaView, Text, View } from "react-native";
 
 import { images } from "@/constants/images";
 import { colors } from "@/theme";
+import type { ModelTier } from "@/types/models";
 
-const TOTAL_GB = 2.4;
+const MODEL_SIZES: Record<ModelTier, number> = {
+  fast: 0.81,
+  balanced: 2.49,
+  best_quality: 5.13,
+};
+
+const MODEL_NAMES: Record<ModelTier, string> = {
+  fast: "Fast",
+  balanced: "Balanced",
+  best_quality: "Best quality",
+};
 
 export default function DownloadModel() {
   const router = useRouter();
+  const { tier, wifiOnly } = useLocalSearchParams<{ tier?: ModelTier; wifiOnly?: string }>();
+  const modelTier = tier ?? "balanced";
+  const isWifiOnly = wifiOnly !== "false";
   const [progress, setProgress] = useState(20);
   const [paused, setPaused] = useState(false);
   const done = progress >= 100;
+
+  const totalGb = MODEL_SIZES[modelTier];
+  const modelName = MODEL_NAMES[modelTier];
 
   useEffect(() => {
     if (paused || done) return;
@@ -29,7 +46,7 @@ export default function DownloadModel() {
     return () => clearTimeout(timeout);
   }, [done, router]);
 
-  const downloadedGb = ((progress / 100) * TOTAL_GB).toFixed(1);
+  const downloadedGb = ((progress / 100) * totalGb).toFixed(1);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.ink.background }}>
@@ -38,10 +55,10 @@ export default function DownloadModel() {
 
         <View className="items-center gap-2">
           <Text className="text-center text-h1 text-white">
-            {done ? "Balanced model ready" : "Downloading Balanced model"}
+            {done ? `${modelName} model ready` : `Downloading ${modelName} model`}
           </Text>
           <Text className="text-center text-body-lg text-ink-secondary">
-            {done ? "You're all set." : `${downloadedGb} GB of ${TOTAL_GB} GB · about 3 minutes left`}
+            {done ? "You're all set." : `${downloadedGb} GB of ${totalGb} GB · about 3 minutes left`}
           </Text>
         </View>
 
@@ -68,7 +85,7 @@ export default function DownloadModel() {
             <Text className="text-h3 text-white">{paused ? "Resume download" : "Pause download"}</Text>
           </Pressable>
           <Text className="text-center text-caption text-ink-secondary">
-            {paused ? "Download paused" : "Downloading over Wi-Fi"}
+            {paused ? "Download paused" : isWifiOnly ? "Downloading over Wi-Fi" : "Downloading"}
           </Text>
         </View>
       </View>
