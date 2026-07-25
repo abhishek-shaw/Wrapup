@@ -1,3 +1,4 @@
+import { Link } from "expo-router";
 import React from "react";
 import { ScrollView, Text, View } from "react-native";
 
@@ -19,6 +20,14 @@ export default function Index() {
         <Text className="text-h1 text-text-primary">Wrapup</Text>
         <Text className="text-body-md text-text-secondary">Design system preview</Text>
       </View>
+
+      <Link href="/welcome" className="text-body-lg text-amber">
+        View welcome screen →
+      </Link>
+
+      <Link href="/permissions" className="text-body-lg text-amber">
+        View permissions screen →
+      </Link>
 
       <View className="gap-2">
         <Text className="text-h2 text-text-primary">Typography</Text>
