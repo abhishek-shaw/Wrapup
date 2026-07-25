@@ -19,4 +19,3 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
   }
   return dbPromise;
 }
-}
