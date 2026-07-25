@@ -29,6 +29,10 @@
   --color-border: #e5e1d8;
   --color-background: #faf8f3;
 
+  /* Ink — dark surface used by onboarding-style screens (welcome, onboarding) */
+  --color-ink: #1a1a1a;
+  --color-ink-secondary: #c3c2b8;
+
   /* Mascot — keep in sync with AGENTS.md, distinct from primary palette */
   --color-mascot-face: #fce8c8;
   --color-mascot-ears: #d8791c;
@@ -40,6 +44,18 @@
  * together, since React Native selects a static font file per weight rather
  * than synthesizing bold/semibold from a single family (unlike web).
  */
+@utility text-display {
+  font-family: "Nunito_700Bold";
+  font-size: 34px;
+  line-height: 40px;
+}
+
+@utility text-headline {
+  font-family: "Nunito_700Bold";
+  font-size: 26px;
+  line-height: 32px;
+}
+
 @utility text-h1 {
   font-family: "Nunito_700Bold";
   font-size: 28px;

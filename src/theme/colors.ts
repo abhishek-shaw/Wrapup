@@ -23,6 +23,12 @@ export const colors = {
     border: "#E5E1D8",
     background: "#FAF8F3",
   },
+  // Dark surface used by onboarding-style screens (welcome, onboarding) —
+  // kept separate from `neutral` since it's an inverted palette, not a shade of it.
+  ink: {
+    background: "#1A1A1A",
+    textSecondary: "#C3C2B8",
+  },
   // Mascot palette per AGENTS.md — kept separate from `primary` since ears
   // (#D8791C) is a distinct value from deepAmber, and this palette must stay
   // fixed everywhere the mascot appears regardless of future brand palette edits.
