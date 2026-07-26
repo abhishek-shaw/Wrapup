@@ -134,19 +134,19 @@ export function getCaptureStatus(): RecorderState | null {
 }
 
 /** Pauses the active capture in place — the recorder stays alive (unlike stopCapture), just not writing audio. */
-export function pauseCapture(): void {
+export async function pauseCapture(): Promise<void> {
   if (!activeRecorder) {
     throw new Error("No recording in progress");
   }
-  activeRecorder.pause();
+  await activeRecorder.pause();
 }
 
 /** Resumes a capture previously paused with pauseCapture(). */
-export function resumeCapture(): void {
+export async function resumeCapture(): Promise<void> {
   if (!activeRecorder) {
     throw new Error("No recording in progress");
   }
-  activeRecorder.record();
+  await activeRecorder.record();
 }
 
 export type MeetingAudioPlayback = {

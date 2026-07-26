@@ -51,7 +51,7 @@ function isFilePresent(file: File, minBytes: number): boolean {
 export function areAsrModelsReady(): boolean {
   return (
     isFilePresent(getWhisperModelFile(), WHISPER_MODEL_SIZE_BYTES * 0.9) &&
-    isFilePresent(getVadModelFile(), VAD_MODEL_SIZE_BYTES * 0.1)
+    isFilePresent(getVadModelFile(), VAD_MODEL_SIZE_BYTES * 0.9)
   );
 }
 

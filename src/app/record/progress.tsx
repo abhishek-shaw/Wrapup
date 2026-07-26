@@ -111,13 +111,23 @@ export default function RecordingProgress() {
     return () => clearInterval(interval);
   }, [isPaused]);
 
-  const handleTogglePause = () => {
-    if (isPaused) {
-      resumeCapture();
-      resumeStore();
-    } else {
-      pauseCapture();
-      pauseStore();
+  const handleTogglePause = async () => {
+    // Skip/disable the toggle action when captureResult is already set
+    // (recording has already stopped/finalized — pausing/resuming a finished
+    // capture doesn't make sense).
+    if (captureResult) return;
+
+    try {
+      if (isPaused) {
+        await resumeCapture();
+        resumeStore();
+      } else {
+        await pauseCapture();
+        pauseStore();
+      }
+    } catch (err) {
+      console.error("[Recording] pause/resume failed:", err);
+      Alert.alert("Pause failed", "Could not pause/resume the recording. Please try ending the meeting instead.");
     }
   };
 
@@ -156,9 +166,12 @@ export default function RecordingProgress() {
             if (!captureResult) setCaptureResult(result);
             deleteAudioFile(result.audioFilePath);
             await deleteMeeting(id);
-          } catch {
-            // best-effort cleanup — still leave the recording session below
-            // even if a step here failed, rather than trapping the user here
+          } catch (err) {
+            // Safe recording-state cleanup happens regardless, but notify the
+            // user if deleteMeeting failed — the audio file may be gone but
+            // the DB row could still be there.
+            Alert.alert("Discard failed", "Could not fully delete the recording. Please try again from Library.");
+            console.error("[Recording] discard failed:", err);
           } finally {
             finishRecordingState();
             router.back();

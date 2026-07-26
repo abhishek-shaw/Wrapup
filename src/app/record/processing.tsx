@@ -15,6 +15,12 @@ import { colors } from "@/theme";
 
 const STEPS = ["Transcribing audio", "Writing the summary", "Finding action items"];
 
+// Module-level Set to track which meetings are currently processing — prevents
+// duplicate transcription work from double-invoked effects (React StrictMode
+// double-mount, fast remounts, etc.) while preserving correct behavior for
+// genuinely distinct meetings running concurrently.
+const processingMeetings = new Set<string>();
+
 export default function Processing() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -81,6 +87,14 @@ export default function Processing() {
     }
 
     if (currentStep === 0) {
+      // Atomically claim the processing marker for this meetingId — if another
+      // mounted or remounted instance already owns it, return early without
+      // processing. Prevents duplicate transcription from double effects.
+      if (processingMeetings.has(id)) {
+        return;
+      }
+      processingMeetings.add(id);
+
       let isMounted = true;
       const transcribe = async () => {
         try {
@@ -100,6 +114,10 @@ export default function Processing() {
           // see AGENTS.md Privacy & Network Rules.
           console.error("[ASR] transcription failed:", err);
           if (isMounted) setError("Failed to transcribe the recording");
+        } finally {
+          // Clear the marker when processing finishes (success or failure)
+          // for this meetingId.
+          processingMeetings.delete(id);
         }
       };
       transcribe();
