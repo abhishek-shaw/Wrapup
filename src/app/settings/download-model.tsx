@@ -77,6 +77,9 @@ export default function DownloadModel() {
   };
 
   const startDownload = async () => {
+    // Already on disk from an earlier session — finishing up is just a
+    // checksum + activation, no network call at all, so this runs
+    // regardless of the Wi-Fi gate below (see the mount effect).
     if (isModelDownloaded(tier)) {
       await finalize();
       return;
@@ -100,10 +103,22 @@ export default function DownloadModel() {
     }
   };
 
-  // Only gates the *start* of the download, per AGENTS.md ("checked before
-  // starting or resuming") — re-runs once wifiGateOpen flips true (Wi-Fi
-  // connects), and startedRef prevents it from firing again after that.
-  // Resuming after a pause has its own gate check in handlePauseResume.
+  // Picks up an already-downloaded file the instant this screen mounts,
+  // independent of Wi-Fi state — gating that on the network gate would
+  // strand a user who already has the model on a "Waiting for Wi-Fi"
+  // screen for no reason, since finishing up needs no network call.
+  useEffect(() => {
+    if (startedRef.current || !isModelDownloaded(tier)) return;
+    startedRef.current = true;
+    startDownload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tier]);
+
+  // Gates the *start* of an actual network download, per AGENTS.md ("checked
+  // before starting or resuming") — re-runs once wifiGateOpen flips true
+  // (Wi-Fi connects), and startedRef prevents it from firing again after
+  // that (including if the effect above already handled an already-downloaded
+  // file). Resuming after a pause has its own gate check in handlePauseResume.
   useEffect(() => {
     if (!wifiGateOpen || startedRef.current) return;
     startedRef.current = true;
