@@ -8,12 +8,11 @@
     "scheme": "wrapup",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon",
       "bundleIdentifier": "com.anonymous.Wrapup"
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#F2A623",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
@@ -29,9 +28,9 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#F2A623",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "imageWidth": 140
         }
       ],
       "expo-sqlite",
@@ -39,6 +38,20 @@
         "expo-calendar",
         {
           "calendarPermission": "Wrapup reads your calendar so it can show today's meetings and offer to record them."
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Wrapup uses your microphone to record meetings and dictation. Recording only starts after you confirm, and audio never leaves this device.",
+          "enableBackgroundRecording": true,
+          "enableBackgroundPlayback": false
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#EF9F27"
         }
       ]
     ],

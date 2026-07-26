@@ -2,16 +2,22 @@ import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import React, { useEffect } from "react";
 
+import { useSettingsStore } from "@/store/settings";
 import { selectDueSoonCount, useTodosStore } from "@/store/todos";
 import { colors } from "@/theme";
 
 export default function TabsLayout() {
   const load = useTodosStore((state) => state.load);
   const dueSoonCount = useTodosStore(selectDueSoonCount);
+  const loadReminderPreferences = useSettingsStore((state) => state.loadReminderPreferences);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    // Reminder preferences must be loaded from AsyncStorage before todos
+    // load and schedule against them — otherwise the very first load of the
+    // session would schedule using the in-memory defaults instead of
+    // whatever the user actually chose in Settings.
+    loadReminderPreferences().then(() => load());
+  }, [load, loadReminderPreferences]);
 
   return (
     <Tabs

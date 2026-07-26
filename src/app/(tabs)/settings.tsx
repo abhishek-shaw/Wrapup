@@ -1,10 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
-import { Pressable, SafeAreaView, ScrollView, Switch, Text, View } from "react-native";
+import { Alert, Pressable, SafeAreaView, ScrollView, Switch, Text, View } from "react-native";
 
 import { SettingRow } from "@/components/setting-row";
-import { useSettingsStore } from "@/store/settings";
+import { REMINDER_LEAD_TIME_OPTIONS, useSettingsStore } from "@/store/settings";
+import { useTodosStore } from "@/store/todos";
 import { colors } from "@/theme";
 
 export default function Settings() {
@@ -14,10 +15,48 @@ export default function Settings() {
   const calendarConnected = useSettingsStore((state) => state.calendarConnected);
   const loadCalendarStatus = useSettingsStore((state) => state.loadCalendarStatus);
   const connectCalendar = useSettingsStore((state) => state.connectCalendar);
+  const notificationsEnabled = useSettingsStore((state) => state.notificationsEnabled);
+  const loadNotificationStatus = useSettingsStore((state) => state.loadNotificationStatus);
+  const enableNotifications = useSettingsStore((state) => state.enableNotifications);
+  const remindAboutOpenTodos = useSettingsStore((state) => state.remindAboutOpenTodos);
+  const setRemindAboutOpenTodos = useSettingsStore((state) => state.setRemindAboutOpenTodos);
+  const reminderLeadTimeMinutes = useSettingsStore((state) => state.reminderLeadTimeMinutes);
+  const setReminderLeadTimeMinutes = useSettingsStore((state) => state.setReminderLeadTimeMinutes);
+  const resyncReminders = useTodosStore((state) => state.resyncReminders);
 
   useEffect(() => {
     loadCalendarStatus();
-  }, [loadCalendarStatus]);
+    loadNotificationStatus();
+  }, [loadCalendarStatus, loadNotificationStatus]);
+
+  const handleToggleRemindAboutTodos = async (enabled: boolean) => {
+    // Toggling this on is also this screen's ask for notification
+    // permission, mirroring how Calendar's "Connect" button above requests
+    // its permission inline rather than sending the user back to onboarding.
+    if (enabled && !notificationsEnabled) {
+      await enableNotifications();
+    }
+    await setRemindAboutOpenTodos(enabled);
+    await resyncReminders();
+  };
+
+  const currentLeadTimeLabel =
+    REMINDER_LEAD_TIME_OPTIONS.find((option) => option.minutes === reminderLeadTimeMinutes)?.label ??
+    "At due time";
+
+  const handlePressLeadTime = () => {
+    Alert.alert(
+      "Remind me",
+      "How far ahead of the due date should we remind you?",
+      REMINDER_LEAD_TIME_OPTIONS.map((option) => ({
+        text: option.label,
+        onPress: async () => {
+          await setReminderLeadTimeMinutes(option.minutes);
+          await resyncReminders();
+        },
+      })),
+    );
+  };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.ink.background }}>
@@ -101,6 +140,42 @@ export default function Settings() {
               />
             }
           />
+        </View>
+
+        <View className="gap-2">
+          <Text className="px-1 text-caption text-ink-secondary">TODO REMINDERS</Text>
+          <View className="rounded-2xl bg-ink-surface">
+            <View className={remindAboutOpenTodos ? "border-b border-white/10" : ""}>
+              <SettingRow
+                icon="notifications-outline"
+                title="Remind me about overdue items"
+                description="A local notification right when an action item's due date arrives."
+                control={
+                  <Switch
+                    value={remindAboutOpenTodos}
+                    onValueChange={handleToggleRemindAboutTodos}
+                    trackColor={{ false: "#4A4A46", true: colors.primary.amber }}
+                    thumbColor="#FFFFFF"
+                  />
+                }
+              />
+            </View>
+            {remindAboutOpenTodos ? (
+              <SettingRow
+                icon="time-outline"
+                title="Remind me"
+                control={
+                  <Pressable
+                    onPress={handlePressLeadTime}
+                    className="flex-row items-center gap-1 active:opacity-70"
+                  >
+                    <Text className="text-body-md text-ink-secondary">{currentLeadTimeLabel}</Text>
+                    <Ionicons name="chevron-forward" size={16} color={colors.ink.textSecondary} />
+                  </Pressable>
+                }
+              />
+            ) : null}
+          </View>
         </View>
 
         <Pressable className="flex-row items-center gap-3 rounded-2xl bg-ink-surface px-4 py-4 active:opacity-70">

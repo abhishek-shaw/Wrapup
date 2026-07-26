@@ -1,55 +1,45 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Pressable, SafeAreaView, Text, View } from "react-native";
 
-import { createMeeting, updateMeetingStatus } from "@/db/queries/meetings";
-import { generateId } from "@/lib/id";
+import { RecordingIndicator } from "@/components/recording-indicator";
+import { finishRecording, updateMeetingStatus } from "@/db/queries/meetings";
+import { formatDuration } from "@/lib/format-duration";
+import { getCaptureStatus, stopCapture } from "@/services/recording";
+import { useRecordingStore } from "@/store/recording";
 import { colors } from "@/theme";
 
 const BAR_COUNT = 7;
+const MIN_BAR_HEIGHT = 8;
+const MAX_BAR_HEIGHT = 44;
 
-function formatDuration(totalSeconds: number) {
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+/** Maps a metering reading (dBFS, roughly -60 silence to 0 max) to a bar height in px. */
+function meteringToHeight(dB: number | null | undefined): number {
+  if (dB == null || Number.isNaN(dB)) return MIN_BAR_HEIGHT;
+  const clamped = Math.max(-60, Math.min(0, dB));
+  const normalized = (clamped + 60) / 60;
+  return Math.round(MIN_BAR_HEIGHT + normalized * (MAX_BAR_HEIGHT - MIN_BAR_HEIGHT));
 }
 
 export default function RecordingProgress() {
   const router = useRouter();
-  const { title, calendarEventId, source } = useLocalSearchParams<{
-    title?: string;
-    calendarEventId?: string;
-    source?: string;
-  }>();
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const activeMeetingTitle = useRecordingStore((state) => state.activeMeetingTitle);
+  const markProcessing = useRecordingStore((state) => state.markProcessing);
   const [seconds, setSeconds] = useState(0);
-  const [barHeights, setBarHeights] = useState<number[]>(Array(BAR_COUNT).fill(12));
+  const [barHeights, setBarHeights] = useState<number[]>(Array(BAR_COUNT).fill(MIN_BAR_HEIGHT));
   const [stopping, setStopping] = useState(false);
 
-  // Create meeting ID and promise synchronously to avoid race condition
-  const meetingData = useRef<{ id: string; creationPromise: Promise<void> }>(
-    (() => {
-      const id = generateId();
-      const creationPromise = createMeeting({
-        id,
-        title: title ?? "New recording",
-        source: source === "calendar_meeting" ? "calendar_meeting" : "manual_dictation",
-        calendarEventId: calendarEventId ?? null,
-        startedAt: new Date().toISOString(),
-        status: "recording",
-      });
-      return { id, creationPromise };
-    })(),
-  );
-
-  useEffect(() => {
-    const interval = setInterval(() => setSeconds((prev) => prev + 1), 1000);
-    return () => clearInterval(interval);
-  }, []);
-
+  // Poll the native recorder rather than a local timer, since capture keeps
+  // running (and its true duration keeps advancing) even if this screen was
+  // unmounted and remounted after the user navigated away and back.
   useEffect(() => {
     const interval = setInterval(() => {
-      setBarHeights(Array.from({ length: BAR_COUNT }, () => 8 + Math.round(Math.random() * 36)));
-    }, 350);
+      const status = getCaptureStatus();
+      if (!status) return;
+      setSeconds(Math.floor(status.durationMillis / 1000));
+      setBarHeights((prev) => [...prev.slice(1), meteringToHeight(status.metering)]);
+    }, 200);
     return () => clearInterval(interval);
   }, []);
 
@@ -57,9 +47,15 @@ export default function RecordingProgress() {
     if (stopping) return;
     setStopping(true);
     try {
-      await meetingData.current.creationPromise;
-      await updateMeetingStatus(meetingData.current.id, "processing");
-      router.replace(`/record/processing?id=${meetingData.current.id}`);
+      const { audioFilePath, durationSeconds } = await stopCapture();
+      await finishRecording(id, {
+        audioFilePath,
+        endedAt: new Date().toISOString(),
+        durationSeconds,
+      });
+      await updateMeetingStatus(id, "processing");
+      markProcessing();
+      router.replace(`/record/processing?id=${id}`);
     } catch {
       setStopping(false);
       // surface error to user here
@@ -69,17 +65,12 @@ export default function RecordingProgress() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.ink.background }}>
       <View className="flex-1 items-center justify-between px-8 py-10">
-        <View className="rounded-full bg-black/30 px-4 py-2">
-          <View className="flex-row items-center gap-2">
-            <View className="h-2 w-2 rounded-full bg-error" />
-            <Text className="text-body-md text-error">Recording</Text>
-          </View>
-        </View>
+        <RecordingIndicator phase="recording" label="Recording" />
 
         <View className="items-center gap-6">
           <View className="items-center gap-1">
             <Text className="text-display text-white">{formatDuration(seconds)}</Text>
-            <Text className="text-body-lg text-ink-secondary">{title ?? "New recording"}</Text>
+            <Text className="text-body-lg text-ink-secondary">{activeMeetingTitle ?? "New recording"}</Text>
           </View>
 
           <View className="h-16 flex-row items-end gap-2">
@@ -95,7 +86,8 @@ export default function RecordingProgress() {
 
         <Pressable
           onPress={stopRecording}
-          className="h-20 w-20 items-center justify-center rounded-full bg-coral active:opacity-80"
+          disabled={stopping}
+          className="h-20 w-20 items-center justify-center rounded-full bg-coral active:opacity-80 disabled:opacity-60"
         >
           <View className="h-6 w-6 rounded bg-white" />
         </Pressable>

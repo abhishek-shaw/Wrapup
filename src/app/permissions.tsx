@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import React from "react";
-import { Pressable, SafeAreaView, Text, View } from "react-native";
+import React, { useEffect, useState } from "react";
+import { ActivityIndicator, Pressable, SafeAreaView, Text, View } from "react-native";
 
 import { PermissionCard } from "@/components/permission-card";
 import { useSettingsStore } from "@/store/settings";
@@ -10,6 +10,14 @@ import { colors } from "@/theme";
 export default function Permissions() {
   const router = useRouter();
   const completeOnboarding = useSettingsStore((state) => state.completeOnboarding);
+  const notificationsEnabled = useSettingsStore((state) => state.notificationsEnabled);
+  const loadNotificationStatus = useSettingsStore((state) => state.loadNotificationStatus);
+  const enableNotifications = useSettingsStore((state) => state.enableNotifications);
+  const [requestingNotifications, setRequestingNotifications] = useState(false);
+
+  useEffect(() => {
+    loadNotificationStatus();
+  }, [loadNotificationStatus]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.ink.background }}>
@@ -43,6 +51,27 @@ export default function Permissions() {
               iconBackgroundClassName="bg-permission-notifications-bg"
               title="Notifications"
               description="For reminders about action items you haven't finished yet."
+              control={
+                notificationsEnabled ? (
+                  <Text className="text-body-sm text-ink-secondary">Enabled</Text>
+                ) : (
+                  <Pressable
+                    onPress={async () => {
+                      setRequestingNotifications(true);
+                      await enableNotifications();
+                      setRequestingNotifications(false);
+                    }}
+                    disabled={requestingNotifications}
+                    className="rounded-xl border border-white/20 px-4 py-2 active:opacity-70 disabled:opacity-60"
+                  >
+                    {requestingNotifications ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Text className="text-body-sm text-white">Enable</Text>
+                    )}
+                  </Pressable>
+                )
+              }
             />
           </View>
 
