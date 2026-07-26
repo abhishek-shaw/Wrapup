@@ -16,7 +16,14 @@ export default function TabsLayout() {
     // load and schedule against them — otherwise the very first load of the
     // session would schedule using the in-memory defaults instead of
     // whatever the user actually chose in Settings.
-    loadReminderPreferences().then(() => load());
+    loadReminderPreferences()
+      .then(() => load())
+      .catch((error) => {
+        console.error("Failed to load reminder preferences:", error);
+        // Still load todos even if preference loading fails, so the app
+        // remains usable — scheduling will just use in-memory defaults.
+        load();
+      });
   }, [load, loadReminderPreferences]);
 
   return (

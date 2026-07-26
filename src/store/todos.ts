@@ -6,6 +6,7 @@ import { useSettingsStore } from "@/store/settings";
 import type { Todo } from "@/types/models";
 
 const DUE_SOON_WINDOW_DAYS = 1;
+const MAX_SCHEDULED_NOTIFICATIONS = 64; // iOS hard limit for pending local notifications
 
 export function isDueSoonOrOverdue(todo: Todo): boolean {
   if (todo.completed || !todo.dueDate) return false;
@@ -21,6 +22,19 @@ export function isDueSoonOrOverdue(todo: Todo): boolean {
 function getReminderPreferences(): TodoReminderPreferences {
   const { remindAboutOpenTodos, reminderLeadTimeMinutes } = useSettingsStore.getState();
   return { enabled: remindAboutOpenTodos, leadTimeMinutes: reminderLeadTimeMinutes };
+}
+
+/** Filters and prioritizes todos for reminder scheduling, capping at iOS's
+ * 64-notification limit by earliest due date. Todos without a due date, or
+ * already completed, are excluded — they're not eligible for scheduling. */
+function selectTodosForScheduling(todos: Todo[]): Todo[] {
+  const eligible = todos.filter((todo) => !todo.completed && todo.dueDate);
+  const sorted = eligible.sort((a, b) => {
+    const dateA = new Date(a.dueDate!).getTime();
+    const dateB = new Date(b.dueDate!).getTime();
+    return dateA - dateB;
+  });
+  return sorted.slice(0, MAX_SCHEDULED_NOTIFICATIONS);
 }
 
 type TodosState = {
@@ -46,7 +60,8 @@ export const useTodosStore = create<TodosState>((set, get) => ({
     // due date hasn't changed — this is also what picks up reminders for
     // todos that existed before notification permission was granted.
     const preferences = getReminderPreferences();
-    await Promise.all(todos.map((todo) => scheduleTodoReminder(todo, preferences)));
+    const toSchedule = selectTodosForScheduling(todos);
+    await Promise.all(toSchedule.map((todo) => scheduleTodoReminder(todo, preferences)));
   },
   toggle: async (id: string) => {
     const target = get().todos.find((todo) => todo.id === id);
@@ -65,7 +80,8 @@ export const useTodosStore = create<TodosState>((set, get) => ({
   },
   resyncReminders: async () => {
     const preferences = getReminderPreferences();
-    await Promise.all(get().todos.map((todo) => scheduleTodoReminder(todo, preferences)));
+    const toSchedule = selectTodosForScheduling(get().todos);
+    await Promise.all(toSchedule.map((todo) => scheduleTodoReminder(todo, preferences)));
   },
 }));
 

@@ -58,8 +58,11 @@ export default function Permissions() {
                   <Pressable
                     onPress={async () => {
                       setRequestingNotifications(true);
-                      await enableNotifications();
-                      setRequestingNotifications(false);
+                      try {
+                        await enableNotifications();
+                      } finally {
+                        setRequestingNotifications(false);
+                      }
                     }}
                     disabled={requestingNotifications}
                     className="rounded-xl border border-white/20 px-4 py-2 active:opacity-70 disabled:opacity-60"

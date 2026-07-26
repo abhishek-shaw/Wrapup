@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Animated, PanResponder, Pressable, Text, View, type LayoutChangeEvent } from "react-native";
 
 import { SummaryCard } from "@/components/summary-card";
@@ -42,6 +42,11 @@ export function MeetingAudioPlayer({ audioFilePath }: MeetingAudioPlayerProps) {
 
   const [trackWidth, setTrackWidth] = useState(0);
   const [dragFraction, setDragFraction] = useState<number | null>(null);
+  const trackLayoutRef = useRef<{ x: number; width: number } | null>(null);
+  const thumbUnpinTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const seekToFractionRef = useRef(seekToFraction);
+  const setDragFractionRef = useRef(setDragFraction);
+  const [panHandlers, setPanHandlers] = useState<ReturnType<typeof PanResponder.create>["panHandlers"]>({});
 
   // One Animated.Value per bar, created once and sprung toward each new real
   // amplitude reading as it arrives — this is what gives the bars their
@@ -50,9 +55,65 @@ export function MeetingAudioPlayer({ audioFilePath }: MeetingAudioPlayerProps) {
   // the lint config here (react-hooks/refs, from app.json's reactCompiler)
   // disallows reading ref.current at render time.
   const [barAnims] = useState(() => Array.from({ length: WAVEFORM_BAR_COUNT }, () => new Animated.Value(0)));
+  // Only read/written inside the effect below (never during render), so this
+  // is safe under the react-hooks/refs rule the same way statusRef is in
+  // useMeetingAudioPlayback.
+  const previousBarsRef = useRef<number[] | null>(null);
+
+  // Create PanResponder once in an effect (not during render) to satisfy
+  // react-hooks/refs rule, which flags any ref access inside render-time
+  // functions (including lazy useState initializers). Store the panHandlers
+  // object in state so it can be spread into JSX without triggering the lint
+  // rule's "cannot access refs during render" error.
+  useEffect(() => {
+    const responder = PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: (event) => {
+        const layout = trackLayoutRef.current;
+        if (!layout || layout.width <= 0) return;
+        const localX = event.nativeEvent.pageX - layout.x;
+        const fraction = clamp01(localX / layout.width);
+        setDragFractionRef.current(fraction);
+        seekToFractionRef.current(fraction);
+      },
+      onPanResponderMove: (event) => {
+        const layout = trackLayoutRef.current;
+        if (!layout || layout.width <= 0) return;
+        const localX = event.nativeEvent.pageX - layout.x;
+        const fraction = clamp01(localX / layout.width);
+        setDragFractionRef.current(fraction);
+        seekToFractionRef.current(fraction);
+      },
+      onPanResponderRelease: (event) => {
+        const layout = trackLayoutRef.current;
+        if (!layout || layout.width <= 0) return;
+        const localX = event.nativeEvent.pageX - layout.x;
+        const fraction = clamp01(localX / layout.width);
+        setDragFractionRef.current(fraction);
+        seekToFractionRef.current(fraction);
+        // Keep the thumb pinned to the released position for a beat — the
+        // player's status hook updates on its own interval, so clearing this
+        // immediately would show the thumb snap backward until it catches up.
+        if (thumbUnpinTimeoutRef.current) {
+          clearTimeout(thumbUnpinTimeoutRef.current);
+        }
+        thumbUnpinTimeoutRef.current = setTimeout(() => setDragFractionRef.current(null), 300);
+      },
+      onPanResponderTerminate: () => {
+        if (thumbUnpinTimeoutRef.current) {
+          clearTimeout(thumbUnpinTimeoutRef.current);
+        }
+        setDragFractionRef.current(null);
+      },
+    });
+    setPanHandlers(responder.panHandlers);
+  }, []);
 
   useEffect(() => {
+    const previous = previousBarsRef.current;
     waveformBars.forEach((value, index) => {
+      if (previous && previous[index] === value) return; // unchanged — don't restart its spring
       Animated.spring(barAnims[index], {
         toValue: value,
         useNativeDriver: false,
@@ -60,37 +121,23 @@ export function MeetingAudioPlayer({ audioFilePath }: MeetingAudioPlayerProps) {
         bounciness: 12,
       }).start();
     });
+    previousBarsRef.current = waveformBars;
   }, [waveformBars, barAnims]);
 
-  const handleTrackTouch = (locationX: number) => {
-    if (trackWidth <= 0) return;
-    const fraction = clamp01(locationX / trackWidth);
-    setDragFraction(fraction);
-    seekToFraction(fraction);
-  };
+  // Keep the refs updated with the latest callback values so the PanResponder
+  // (created once in the effect above) always calls the current versions.
+  useEffect(() => {
+    seekToFractionRef.current = seekToFraction;
+    setDragFractionRef.current = setDragFraction;
+  }, [seekToFraction, setDragFraction]);
 
-  // Rebuilt every render (cheap — a plain object of callback bindings, no
-  // native resources) so it always closes over the current render's
-  // `handleTrackTouch`/`trackWidth`/`seekToFraction`. RN's responder system
-  // just reads whichever `panHandlers` props are current when a touch event
-  // fires, the same as any other event-handler prop, so there's no need to
-  // keep one stable instance across renders — and no ref access, which the
-  // react-hooks/refs rule (from app.json's reactCompiler) disallows inside a
-  // function built during render.
-  const panResponder = PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: () => true,
-    onPanResponderGrant: (event) => handleTrackTouch(event.nativeEvent.locationX),
-    onPanResponderMove: (event) => handleTrackTouch(event.nativeEvent.locationX),
-    onPanResponderRelease: (event) => {
-      handleTrackTouch(event.nativeEvent.locationX);
-      // Keep the thumb pinned to the released position for a beat — the
-      // player's status hook updates on its own interval, so clearing this
-      // immediately would show the thumb snap backward until it catches up.
-      setTimeout(() => setDragFraction(null), 300);
-    },
-    onPanResponderTerminate: () => setDragFraction(null),
-  });
+  useEffect(() => {
+    return () => {
+      if (thumbUnpinTimeoutRef.current) {
+        clearTimeout(thumbUnpinTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const playbackFraction = durationSeconds > 0 ? clamp01(positionSeconds / durationSeconds) : 0;
   const thumbFraction = dragFraction ?? playbackFraction;
@@ -107,6 +154,7 @@ export function MeetingAudioPlayer({ audioFilePath }: MeetingAudioPlayerProps) {
           <Pressable
             onPress={togglePlayback}
             disabled={!isLoaded}
+            accessibilityLabel={isPlaying ? "Pause" : "Play"}
             className="h-12 w-12 items-center justify-center rounded-full bg-amber active:opacity-80 disabled:opacity-50"
           >
             <Ionicons name={isPlaying ? "pause" : "play"} size={20} color={colors.mascot.features} />
@@ -114,8 +162,15 @@ export function MeetingAudioPlayer({ audioFilePath }: MeetingAudioPlayerProps) {
 
           <View className="flex-1 gap-2">
             <View
-              {...panResponder.panHandlers}
-              onLayout={(event: LayoutChangeEvent) => setTrackWidth(event.nativeEvent.layout.width)}
+              {...panHandlers}
+              onLayout={(event: LayoutChangeEvent) => {
+                const { width } = event.nativeEvent.layout;
+                setTrackWidth(width);
+                // Capture pageX via measure() for absolute screen coordinates
+                event.currentTarget.measure((fx, fy, w, h, px) => {
+                  trackLayoutRef.current = { x: px, width: w };
+                });
+              }}
               hitSlop={{ top: 10, bottom: 10 }}
               style={{ height: WAVEFORM_HEIGHT, justifyContent: "center" }}
             >
