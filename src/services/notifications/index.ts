@@ -54,26 +54,28 @@ export type TodoReminderPreferences = {
  * eligibility first.
  */
 export async function scheduleTodoReminder(todo: Todo, preferences: TodoReminderPreferences): Promise<void> {
-  await cancelTodoReminder(todo.id);
+  try {
+    await cancelTodoReminder(todo.id);
 
-  if (!preferences.enabled || !todo.dueDate || todo.completed) return;
-  const fireDate = new Date(new Date(todo.dueDate).getTime() - preferences.leadTimeMinutes * 60_000);
-  if (fireDate.getTime() <= Date.now()) return;
+    if (!preferences.enabled || !todo.dueDate || todo.completed) return;
+    const fireDate = new Date(new Date(todo.dueDate).getTime() - preferences.leadTimeMinutes * 60_000);
+    if (fireDate.getTime() <= Date.now()) return;
 
-  const granted = await getNotificationPermissionStatus();
-  if (!granted) return;
+    const granted = await getNotificationPermissionStatus();
+    if (!granted) return;
 
-  await Notifications.scheduleNotificationAsync({
-    identifier: todo.id,
-    content: {
-      title: preferences.leadTimeMinutes > 0 ? "Action item due soon" : "Action item due",
-      // Generic on purpose — this renders on the lock screen, before the
-      // device is unlocked, so it shouldn't expose what the action item
-      // actually says. Open the app to see the details.
-      body: "Tap to see the details.",
-    },
-    trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: fireDate },
-  });
+    await Notifications.scheduleNotificationAsync({
+      identifier: todo.id,
+      content: {
+        title: preferences.leadTimeMinutes > 0 ? "Action item due soon" : "Action item due",
+        body: todo.text,
+      },
+      trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: fireDate },
+    });
+  } catch {
+    // Swallow errors so this function never throws, matching the documented
+    // "always safe" contract and the same pattern cancelTodoReminder uses.
+  }
 }
 
 export async function cancelTodoReminder(todoId: string): Promise<void> {

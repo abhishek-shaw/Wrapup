@@ -149,7 +149,11 @@ export default function Settings() {
               <SettingRow
                 icon="notifications-outline"
                 title="Remind me about overdue items"
-                description="A local notification right when an action item's due date arrives."
+                description={
+                  reminderLeadTimeMinutes === 0
+                    ? "A local notification arrives right when an action item is due."
+                    : `A local notification arrives ${currentLeadTimeLabel.toLowerCase()} an action item is due.`
+                }
                 control={
                   <Switch
                     value={remindAboutOpenTodos}

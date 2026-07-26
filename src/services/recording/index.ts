@@ -95,9 +95,16 @@ export async function startCapture(): Promise<void> {
   // pattern expo-audio's own useAudioRecorder hook uses internally.
   // eslint-disable-next-line import/namespace
   const recorder = new AudioModule.AudioRecorder(RECORDING_OPTIONS);
-  await recorder.prepareToRecordAsync();
-  recorder.record();
-  activeRecorder = recorder;
+  try {
+    await recorder.prepareToRecordAsync();
+    recorder.record();
+    activeRecorder = recorder;
+  } catch (error) {
+    // If preparation or starting the recording fails, release the native
+    // recorder resource before rethrowing, to avoid leaking it.
+    recorder.release();
+    throw error;
+  }
 }
 
 /** Stops the active capture and returns the local file path + duration. */
