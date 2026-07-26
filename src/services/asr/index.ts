@@ -166,8 +166,8 @@ export async function transcribeMeetingAudio(
 
   return {
     // whisper.rn 0.4.x's TranscribeResult doesn't report detected language
-    // (that field was added later, alongside the JSI install mechanism this
-    // version predates — see models.ts for why we're pinned here).
+    // (that field wasn't added until 0.5.5 — see models.ts for why we're
+    // pinned to 0.4.3, well before both that and the JSI install mechanism).
     text: segments.map((segment) => segment.text).join("\n\n"),
     segments,
     language: null,

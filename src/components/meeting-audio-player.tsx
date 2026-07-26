@@ -1,10 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useEffect, useRef, useState } from "react";
-import { Animated, PanResponder, Pressable, Text, View, type LayoutChangeEvent } from "react-native";
+import { PanResponder, Pressable, Text, View, type LayoutChangeEvent } from "react-native";
 
 import { SummaryCard } from "@/components/summary-card";
+import { WaveformBars } from "@/components/waveform-bars";
 import { formatDuration } from "@/lib/format-duration";
-import { useMeetingAudioPlayback, WAVEFORM_BAR_COUNT } from "@/services/recording";
+import { useMeetingAudioPlayback } from "@/services/recording";
 import { colors } from "@/theme";
 
 const WAVEFORM_HEIGHT = 32;
@@ -47,18 +48,6 @@ export function MeetingAudioPlayer({ audioFilePath }: MeetingAudioPlayerProps) {
   const seekToFractionRef = useRef(seekToFraction);
   const setDragFractionRef = useRef(setDragFraction);
   const [panHandlers, setPanHandlers] = useState<ReturnType<typeof PanResponder.create>["panHandlers"]>({});
-
-  // One Animated.Value per bar, created once and sprung toward each new real
-  // amplitude reading as it arrives — this is what gives the bars their
-  // bounce, rather than snapping instantly to each new height. Lazy useState
-  // (not useRef) because the values are read during render (JSX below) and
-  // the lint config here (react-hooks/refs, from app.json's reactCompiler)
-  // disallows reading ref.current at render time.
-  const [barAnims] = useState(() => Array.from({ length: WAVEFORM_BAR_COUNT }, () => new Animated.Value(0)));
-  // Only read/written inside the effect below (never during render), so this
-  // is safe under the react-hooks/refs rule the same way statusRef is in
-  // useMeetingAudioPlayback.
-  const previousBarsRef = useRef<number[] | null>(null);
 
   // Create PanResponder once in an effect (not during render) to satisfy
   // react-hooks/refs rule, which flags any ref access inside render-time
@@ -110,20 +99,6 @@ export function MeetingAudioPlayer({ audioFilePath }: MeetingAudioPlayerProps) {
     setPanHandlers(responder.panHandlers);
   }, []);
 
-  useEffect(() => {
-    const previous = previousBarsRef.current;
-    waveformBars.forEach((value, index) => {
-      if (previous && previous[index] === value) return; // unchanged — don't restart its spring
-      Animated.spring(barAnims[index], {
-        toValue: value,
-        useNativeDriver: false,
-        speed: 20,
-        bounciness: 12,
-      }).start();
-    });
-    previousBarsRef.current = waveformBars;
-  }, [waveformBars, barAnims]);
-
   // Keep the refs updated with the latest callback values so the PanResponder
   // (created once in the effect above) always calls the current versions.
   useEffect(() => {
@@ -142,7 +117,7 @@ export function MeetingAudioPlayer({ audioFilePath }: MeetingAudioPlayerProps) {
   const playbackFraction = durationSeconds > 0 ? clamp01(positionSeconds / durationSeconds) : 0;
   const thumbFraction = dragFraction ?? playbackFraction;
   const effectivePlayedBarCount =
-    dragFraction !== null ? Math.round(dragFraction * WAVEFORM_BAR_COUNT) : playedBarCount;
+    dragFraction !== null ? Math.round(dragFraction * waveformBars.length) : playedBarCount;
   const thumbLeft = thumbFraction * trackWidth - THUMB_SIZE / 2;
 
   return (
@@ -174,23 +149,13 @@ export function MeetingAudioPlayer({ audioFilePath }: MeetingAudioPlayerProps) {
               hitSlop={{ top: 10, bottom: 10 }}
               style={{ height: WAVEFORM_HEIGHT, justifyContent: "center" }}
             >
-              <View className="flex-row items-end gap-px" style={{ height: WAVEFORM_HEIGHT }}>
-                {waveformBars.map((_, index) => (
-                  <Animated.View
-                    key={index}
-                    className="flex-1 rounded-full"
-                    style={{
-                      height: barAnims[index].interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [3, WAVEFORM_HEIGHT],
-                        extrapolate: "clamp",
-                      }),
-                      backgroundColor:
-                        index < effectivePlayedBarCount ? colors.primary.amber : "rgba(255,255,255,0.2)",
-                    }}
-                  />
-                ))}
-              </View>
+              <WaveformBars
+                values={waveformBars}
+                activeCount={effectivePlayedBarCount}
+                height={WAVEFORM_HEIGHT}
+                activeColor={colors.primary.amber}
+                inactiveColor="rgba(255,255,255,0.2)"
+              />
 
               {trackWidth > 0 ? (
                 <View

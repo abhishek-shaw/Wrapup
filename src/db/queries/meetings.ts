@@ -93,6 +93,12 @@ export async function updateMeetingStatus(id: string, status: RecordingStatus): 
   ]);
 }
 
+/** Deletes a meeting and all its dependent rows (transcript, chat, todo links) via the schema's ON DELETE rules. */
+export async function deleteMeeting(id: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync("DELETE FROM meetings WHERE id = ?;", [id]);
+}
+
 /** Persists where the captured audio landed once recording stops. */
 export async function finishRecording(
   id: string,
