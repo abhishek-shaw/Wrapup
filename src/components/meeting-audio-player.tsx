@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Animated, PanResponder, Pressable, Text, View, type LayoutChangeEvent } from "react-native";
 
 import { SummaryCard } from "@/components/summary-card";
@@ -50,9 +50,15 @@ export function MeetingAudioPlayer({ audioFilePath }: MeetingAudioPlayerProps) {
   // the lint config here (react-hooks/refs, from app.json's reactCompiler)
   // disallows reading ref.current at render time.
   const [barAnims] = useState(() => Array.from({ length: WAVEFORM_BAR_COUNT }, () => new Animated.Value(0)));
+  // Only read/written inside the effect below (never during render), so this
+  // is safe under the react-hooks/refs rule the same way statusRef is in
+  // useMeetingAudioPlayback.
+  const previousBarsRef = useRef<number[] | null>(null);
 
   useEffect(() => {
+    const previous = previousBarsRef.current;
     waveformBars.forEach((value, index) => {
+      if (previous && previous[index] === value) return; // unchanged — don't restart its spring
       Animated.spring(barAnims[index], {
         toValue: value,
         useNativeDriver: false,
@@ -60,6 +66,7 @@ export function MeetingAudioPlayer({ audioFilePath }: MeetingAudioPlayerProps) {
         bounciness: 12,
       }).start();
     });
+    previousBarsRef.current = waveformBars;
   }, [waveformBars, barAnims]);
 
   const handleTrackTouch = (locationX: number) => {
@@ -107,6 +114,7 @@ export function MeetingAudioPlayer({ audioFilePath }: MeetingAudioPlayerProps) {
           <Pressable
             onPress={togglePlayback}
             disabled={!isLoaded}
+            accessibilityLabel={isPlaying ? "Pause" : "Play"}
             className="h-12 w-12 items-center justify-center rounded-full bg-amber active:opacity-80 disabled:opacity-50"
           >
             <Ionicons name={isPlaying ? "pause" : "play"} size={20} color={colors.mascot.features} />

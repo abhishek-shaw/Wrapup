@@ -29,6 +29,13 @@ export default function RecordingProgress() {
   const [seconds, setSeconds] = useState(0);
   const [barHeights, setBarHeights] = useState<number[]>(Array(BAR_COUNT).fill(MIN_BAR_HEIGHT));
   const [stopping, setStopping] = useState(false);
+  // Set the moment stopCapture() succeeds, so a retry after a failed
+  // finishRecording/updateMeetingStatus never calls stopCapture() again —
+  // the native recorder is already released by then and a second call
+  // would just throw "No recording in progress".
+  const [captureResult, setCaptureResult] = useState<{ audioFilePath: string; durationSeconds: number } | null>(
+    null,
+  );
 
   // Poll the native recorder rather than a local timer, since capture keeps
   // running (and its true duration keeps advancing) even if this screen was
@@ -47,11 +54,13 @@ export default function RecordingProgress() {
     if (stopping) return;
     setStopping(true);
     try {
-      const { audioFilePath, durationSeconds } = await stopCapture();
+      const result = captureResult ?? (await stopCapture());
+      if (!captureResult) setCaptureResult(result);
+
       await finishRecording(id, {
-        audioFilePath,
+        audioFilePath: result.audioFilePath,
         endedAt: new Date().toISOString(),
-        durationSeconds,
+        durationSeconds: result.durationSeconds,
       });
       await updateMeetingStatus(id, "processing");
       markProcessing();

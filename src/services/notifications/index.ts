@@ -67,7 +67,10 @@ export async function scheduleTodoReminder(todo: Todo, preferences: TodoReminder
     identifier: todo.id,
     content: {
       title: preferences.leadTimeMinutes > 0 ? "Action item due soon" : "Action item due",
-      body: todo.text,
+      // Generic on purpose — this renders on the lock screen, before the
+      // device is unlocked, so it shouldn't expose what the action item
+      // actually says. Open the app to see the details.
+      body: "Tap to see the details.",
     },
     trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: fireDate },
   });
