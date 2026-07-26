@@ -51,7 +51,11 @@ export default function RecordingConsent() {
         status: "recording",
       });
       beginRecording({ meetingId, title: meetingTitle });
-      router.replace(`/record/progress?id=${meetingId}`);
+      // consent is presented as a transparentModal — replace() across two
+      // different presentation styles (modal -> card) runs as two separate
+      // transitions (dismiss, then push), which looks like a double swipe.
+      // dismissTo collapses that into the single expected transition.
+      router.dismissTo(`/record/progress?id=${meetingId}`);
     } catch {
       await stopCapture().catch(() => {});
       setStarting(false);

@@ -6,17 +6,20 @@ import { Pressable, SafeAreaView, ScrollView, Text, View } from "react-native";
 import { MeetingAudioPlayer } from "@/components/meeting-audio-player";
 import { SummaryCard } from "@/components/summary-card";
 import { TodoItem } from "@/components/todo-item";
+import { TranscriptView } from "@/components/transcript-view";
 import { getMeeting } from "@/db/queries/meetings";
 import { getSummary } from "@/db/queries/summaries";
+import { getTranscript } from "@/db/queries/transcripts";
 import { useTodosStore } from "@/store/todos";
 import { colors } from "@/theme";
-import type { Meeting, Summary } from "@/types/models";
+import type { Meeting, Summary, Transcript } from "@/types/models";
 
 export default function MeetingSummary() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [meeting, setMeeting] = useState<Meeting | null | undefined>(undefined);
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [transcript, setTranscript] = useState<Transcript | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const allTodos = useTodosStore((state) => state.todos);
@@ -27,9 +30,14 @@ export default function MeetingSummary() {
   const loadData = useCallback(async () => {
     try {
       setError(null);
-      const [meetingData, summaryData] = await Promise.all([getMeeting(id), getSummary(id)]);
+      const [meetingData, summaryData, transcriptData] = await Promise.all([
+        getMeeting(id),
+        getSummary(id),
+        getTranscript(id),
+      ]);
       setMeeting(meetingData);
       setSummary(summaryData);
+      setTranscript(transcriptData);
       await loadTodos();
     } catch {
       setError("Failed to load meeting data");
@@ -117,6 +125,8 @@ export default function MeetingSummary() {
             </View>
           </SummaryCard>
         ) : null}
+
+        {transcript ? <TranscriptView segments={transcript.segments ?? []} /> : null}
 
         <View className="flex-row gap-3">
           <Pressable

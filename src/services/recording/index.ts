@@ -32,7 +32,7 @@ import {
   type RecorderState,
   type RecordingOptions,
 } from "expo-audio";
-import { Paths } from "expo-file-system";
+import { File, Paths } from "expo-file-system";
 
 // Mono/16kHz keeps files small and matches the sample rate on-device ASR
 // (whisper.rn) expects, while still sounding clear for a single-room meeting.
@@ -133,6 +133,22 @@ export function getCaptureStatus(): RecorderState | null {
   return activeRecorder ? activeRecorder.getStatus() : null;
 }
 
+/** Pauses the active capture in place — the recorder stays alive (unlike stopCapture), just not writing audio. */
+export function pauseCapture(): void {
+  if (!activeRecorder) {
+    throw new Error("No recording in progress");
+  }
+  activeRecorder.pause();
+}
+
+/** Resumes a capture previously paused with pauseCapture(). */
+export function resumeCapture(): void {
+  if (!activeRecorder) {
+    throw new Error("No recording in progress");
+  }
+  activeRecorder.record();
+}
+
 export type MeetingAudioPlayback = {
   isLoaded: boolean;
   isPlaying: boolean;
@@ -197,6 +213,14 @@ function resolveAudioFileUri(storedUri: string): string {
   const relativePath = storedUri.slice(markerIndex + marker.length);
   const documentRoot = Paths.document.uri.replace(/\/+$/, "");
   return `${documentRoot}/${relativePath}`;
+}
+
+/** Deletes a recorded audio file from disk — used when discarding an in-progress recording. */
+export function deleteAudioFile(uri: string): void {
+  const file = new File(resolveAudioFileUri(uri));
+  if (file.exists) {
+    file.delete();
+  }
 }
 
 /**

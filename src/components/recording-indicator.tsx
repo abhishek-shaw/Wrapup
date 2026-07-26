@@ -6,16 +6,31 @@ import { getCaptureStatus } from "@/services/recording";
 import { useRecordingStore } from "@/store/recording";
 import { formatDuration } from "@/lib/format-duration";
 
+type RecordingIndicatorPhase = "recording" | "paused" | "processing";
+
 type RecordingIndicatorProps = {
-  phase: "recording" | "processing";
+  phase: RecordingIndicatorPhase;
   label: string;
   onPress?: () => void;
 };
 
-/** The pill itself — a recording/processing badge. Used inline on the progress
- * screen and, floating, as the app-wide persistent indicator below. Per
- * AGENTS.md this state must always be visually unambiguous, so phase always
- * drives both the dot color and the label text together. */
+// Full literal class names (not built from interpolated fragments) so
+// NativeWind's static scanner can see every class this component can render.
+const PHASE_DOT_CLASSES: Record<RecordingIndicatorPhase, string> = {
+  recording: "bg-error",
+  paused: "bg-warning",
+  processing: "bg-amber",
+};
+const PHASE_TEXT_CLASSES: Record<RecordingIndicatorPhase, string> = {
+  recording: "text-error",
+  paused: "text-warning",
+  processing: "text-amber",
+};
+
+/** The pill itself — a recording/paused/processing badge. Used inline on the
+ * progress screen and, floating, as the app-wide persistent indicator below.
+ * Per AGENTS.md this state must always be visually unambiguous, so phase
+ * always drives both the dot color and the label text together. */
 export function RecordingIndicator({ phase, label, onPress }: RecordingIndicatorProps) {
   return (
     <Pressable
@@ -24,8 +39,8 @@ export function RecordingIndicator({ phase, label, onPress }: RecordingIndicator
       className="flex-row items-center gap-2 rounded-full px-4 py-2 active:opacity-80"
       style={{ backgroundColor: "rgba(0,0,0,0.3)" }}
     >
-      <View className={`h-2 w-2 rounded-full ${phase === "recording" ? "bg-error" : "bg-amber"}`} />
-      <Text className={`text-body-md ${phase === "recording" ? "text-error" : "text-amber"}`}>{label}</Text>
+      <View className={`h-2 w-2 rounded-full ${PHASE_DOT_CLASSES[phase]}`} />
+      <Text className={`text-body-md ${PHASE_TEXT_CLASSES[phase]}`}>{label}</Text>
     </Pressable>
   );
 }
@@ -39,6 +54,7 @@ export function PersistentRecordingBanner() {
   const pathname = usePathname();
   const recordingState = useRecordingStore((state) => state.recordingState);
   const activeMeetingId = useRecordingStore((state) => state.activeMeetingId);
+  const isPaused = useRecordingStore((state) => state.isPaused);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   useEffect(() => {
@@ -65,9 +81,11 @@ export function PersistentRecordingBanner() {
         style={{ paddingTop: Platform.OS === "android" ? 16 : 8 }}
       >
         <RecordingIndicator
-          phase={recordingState === "recording" ? "recording" : "processing"}
+          phase={recordingState === "recording" ? (isPaused ? "paused" : "recording") : "processing"}
           label={
-            recordingState === "recording" ? `Recording · ${formatDuration(elapsedSeconds)}` : "Processing…"
+            recordingState === "recording"
+              ? `${isPaused ? "Paused" : "Recording"} · ${formatDuration(elapsedSeconds)}`
+              : "Processing…"
           }
           onPress={() =>
             router.push(
