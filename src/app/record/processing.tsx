@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { File } from "expo-file-system";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
@@ -7,10 +8,15 @@ import { ActivityIndicator, Pressable, SafeAreaView, Text, View } from "react-na
 import { images } from "@/constants/images";
 import { getMeeting, updateMeetingStatus } from "@/db/queries/meetings";
 import { indexMeeting } from "@/db/queries/search";
+import { upsertSummary } from "@/db/queries/summaries";
+import { createTodo } from "@/db/queries/todos";
 import { upsertTranscript } from "@/db/queries/transcripts";
+import { generateId } from "@/lib/id";
 import { transcribeMeetingAudio, type TranscribeMeetingResult } from "@/services/asr";
 import { ensureAsrModelsDownloaded } from "@/services/asr/models";
+import { extractActionItems, generateMeetingSummary, type ExtractedActionItem } from "@/services/llm";
 import { useRecordingStore } from "@/store/recording";
+import { useSettingsStore } from "@/store/settings";
 import { colors } from "@/theme";
 
 const STEPS = ["Transcribing audio", "Writing the summary", "Finding action items"];
@@ -25,10 +31,13 @@ export default function Processing() {
   const [modelDownloadFraction, setModelDownloadFraction] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const finishRecordingState = useRecordingStore((state) => state.finish);
-  // Populated by the step-0 transcription effect, read by the finalize
-  // effect once all steps complete — avoids threading the result through
-  // state just to hand it to the next effect.
+  const activeModelTier = useSettingsStore((state) => state.activeModelTier);
+  // Populated by the step-0/1/2 effects, read by the finalize effect once
+  // all steps complete — avoids threading results through state just to
+  // hand them to the next effect.
   const transcriptRef = useRef<TranscribeMeetingResult | null>(null);
+  const summaryTextRef = useRef<string>("");
+  const actionItemsRef = useRef<ExtractedActionItem[]>([]);
 
   useEffect(() => {
     if (currentStep >= STEPS.length) {
@@ -37,9 +46,7 @@ export default function Processing() {
         try {
           const meeting = await getMeeting(id);
           const transcript = transcriptRef.current;
-          // TODO: Replace with real llama.rn-generated content once
-          // summarization/action-item extraction is implemented.
-          const summaryText = "";
+          const summaryText = summaryTextRef.current;
 
           if (meeting) {
             if (transcript) {
@@ -50,6 +57,20 @@ export default function Processing() {
                 language: transcript.language,
               });
             }
+            if (summaryText) {
+              await upsertSummary({ meetingId: id, summaryText, modelTier: activeModelTier });
+            }
+            await Promise.all(
+              actionItemsRef.current.map((item) =>
+                createTodo({
+                  id: generateId(),
+                  meetingId: id,
+                  text: item.text,
+                  ownerHint: item.ownerHint,
+                  dueDate: item.dueDate,
+                }),
+              ),
+            );
             await indexMeeting({
               meetingId: id,
               title: meeting.title,
@@ -88,6 +109,14 @@ export default function Processing() {
           if (!meeting?.audioFilePath) {
             throw new Error("Recording has no audio file");
           }
+          // Catches an empty/truncated recording early with a clear reason,
+          // rather than handing whisper.rn a file it can't meaningfully
+          // decode and hoping the resulting failure is self-explanatory.
+          const audioFile = new File(meeting.audioFilePath);
+          if (!audioFile.exists || audioFile.size < 1024) {
+            throw new Error("The recording file is missing or empty");
+          }
+
           await ensureAsrModelsDownloaded((progress) => {
             if (isMounted) setModelDownloadFraction(progress.fraction < 1 ? progress.fraction : null);
           });
@@ -99,7 +128,12 @@ export default function Processing() {
           // Local-only debug log (no transcript/audio content involved) —
           // see AGENTS.md Privacy & Network Rules.
           console.error("[ASR] transcription failed:", err);
-          if (isMounted) setError("Failed to transcribe the recording");
+          // Without this, the meeting row stays "processing" forever — not
+          // "failed" — which is indistinguishable in the UI from a recording
+          // that's still actively being worked on, and looks stuck.
+          await updateMeetingStatus(id, "failed").catch(() => {});
+          const message = err instanceof Error && err.message ? err.message : "Failed to transcribe the recording";
+          if (isMounted) setError(message);
         }
       };
       transcribe();
@@ -108,12 +142,47 @@ export default function Processing() {
       };
     }
 
-    // Steps beyond transcription aren't implemented yet (summarization needs
-    // llama.rn — see AGENTS.md) — kept as a placeholder animation so the
-    // screen's pacing doesn't change once those steps do real work.
-    const timeout = setTimeout(() => setCurrentStep((prev) => prev + 1), 1500);
-    return () => clearTimeout(timeout);
-  }, [currentStep, id, router, finishRecordingState]);
+    if (currentStep === 1) {
+      let isMounted = true;
+      const summarize = async () => {
+        const transcriptText = transcriptRef.current?.text ?? "";
+        // No model downloaded, or nothing was said — nothing to summarize.
+        // Recording/transcript are still saved; this step just becomes a
+        // no-op rather than blocking the rest of processing on it.
+        if (activeModelTier && transcriptText) {
+          try {
+            summaryTextRef.current = await generateMeetingSummary(transcriptText, activeModelTier);
+          } catch (err) {
+            console.error("[LLM] summary generation failed:", err);
+          }
+        }
+        if (isMounted) setCurrentStep((prev) => prev + 1);
+      };
+      summarize();
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    if (currentStep === 2) {
+      let isMounted = true;
+      const findActionItems = async () => {
+        const transcriptText = transcriptRef.current?.text ?? "";
+        if (activeModelTier && transcriptText) {
+          try {
+            actionItemsRef.current = await extractActionItems(transcriptText, activeModelTier);
+          } catch (err) {
+            console.error("[LLM] action item extraction failed:", err);
+          }
+        }
+        if (isMounted) setCurrentStep((prev) => prev + 1);
+      };
+      findActionItems();
+      return () => {
+        isMounted = false;
+      };
+    }
+  }, [currentStep, id, router, finishRecordingState, activeModelTier]);
 
   if (error) {
     return (

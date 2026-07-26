@@ -10,6 +10,7 @@ export default function TabsLayout() {
   const load = useTodosStore((state) => state.load);
   const dueSoonCount = useTodosStore(selectDueSoonCount);
   const loadReminderPreferences = useSettingsStore((state) => state.loadReminderPreferences);
+  const loadModelSettings = useSettingsStore((state) => state.loadModelSettings);
 
   useEffect(() => {
     // Reminder preferences must be loaded from AsyncStorage before todos
@@ -24,7 +25,10 @@ export default function TabsLayout() {
         // remains usable — scheduling will just use in-memory defaults.
         load();
       });
-  }, [load, loadReminderPreferences]);
+    // Needed before record/processing.tsx can know which (if any) LLM model
+    // to summarize with, so this loads alongside everything else on app start.
+    loadModelSettings();
+  }, [load, loadReminderPreferences, loadModelSettings]);
 
   return (
     <Tabs

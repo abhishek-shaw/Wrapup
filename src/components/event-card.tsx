@@ -3,7 +3,7 @@ import { Text, View } from "react-native";
 
 type EventBadge = {
   label: string;
-  variant: "recorded" | "upcoming" | "pending";
+  variant: "recorded" | "upcoming" | "pending" | "failed";
 };
 
 type EventCardProps = {
@@ -19,12 +19,14 @@ const BADGE_CLASSNAMES: Record<EventBadge["variant"], string> = {
   recorded: "bg-cream",
   upcoming: "bg-coral/20",
   pending: "bg-amber/20",
+  failed: "bg-error/20",
 };
 
 const BADGE_TEXT_CLASSNAMES: Record<EventBadge["variant"], string> = {
   recorded: "text-deep-amber",
   upcoming: "text-coral",
   pending: "text-amber",
+  failed: "text-error",
 };
 
 export function EventCard({ title, subtitle, isMeeting, badge }: EventCardProps) {

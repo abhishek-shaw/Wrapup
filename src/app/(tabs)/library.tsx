@@ -34,7 +34,12 @@ export default function Library() {
 
   useFocusEffect(
     useCallback(() => {
-      listMeetingsWithPreview().then((all) => setMeetings(all.filter((meeting) => meeting.status === "ready")));
+      // Include processing/failed meetings too, not just ready ones — otherwise
+      // a meeting that never finished transcribing (app killed mid-processing, a
+      // transcribe error) only ever shows up in Today, and only on the day it was
+      // recorded. Library is the one place a stuck recording stays reachable
+      // regardless of how much time has passed.
+      listMeetingsWithPreview().then((all) => setMeetings(all.filter((meeting) => meeting.status !== "recording")));
     }, []),
   );
 
@@ -94,18 +99,30 @@ export default function Library() {
             renderSectionHeader={({ section }) => (
               <Text className="mb-2 mt-2 text-body-sm text-ink-secondary">{section.title}</Text>
             )}
-            renderItem={({ item }) => (
-              <RecordingListItem
-                title={item.title}
-                subtitle={
-                  item.previewText
-                    ? `${dateLabel(item.startedAt)} · ${item.previewText}`
-                    : dateLabel(item.startedAt)
-                }
-                icon={item.source === "manual_dictation" ? "mic" : "people"}
-                onPress={() => router.push(`/meeting/${item.id}`)}
-              />
-            )}
+            renderItem={({ item }) => {
+              const needsRetry = item.status === "processing" || item.status === "failed";
+              return (
+                <RecordingListItem
+                  title={item.title}
+                  subtitle={
+                    item.previewText
+                      ? `${dateLabel(item.startedAt)} · ${item.previewText}`
+                      : dateLabel(item.startedAt)
+                  }
+                  icon={item.source === "manual_dictation" ? "mic" : "people"}
+                  badge={
+                    item.status === "failed"
+                      ? { label: "Failed — tap to retry", variant: "failed" }
+                      : item.status === "processing"
+                        ? { label: "Processing", variant: "processing" }
+                        : undefined
+                  }
+                  onPress={() =>
+                    router.push(needsRetry ? `/record/processing?id=${item.id}` : `/meeting/${item.id}`)
+                  }
+                />
+              );
+            }}
           />
         )}
       </View>

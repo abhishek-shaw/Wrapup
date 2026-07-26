@@ -9,7 +9,6 @@ import { colors } from "@/theme";
 
 export default function Permissions() {
   const router = useRouter();
-  const completeOnboarding = useSettingsStore((state) => state.completeOnboarding);
   const notificationsEnabled = useSettingsStore((state) => state.notificationsEnabled);
   const loadNotificationStatus = useSettingsStore((state) => state.loadNotificationStatus);
   const enableNotifications = useSettingsStore((state) => state.enableNotifications);
@@ -88,10 +87,7 @@ export default function Permissions() {
 
         <View className="gap-3">
           <Pressable
-            onPress={async () => {
-              await completeOnboarding();
-              router.replace("/today");
-            }}
+            onPress={() => router.push({ pathname: "/settings/choose-model", params: { origin: "onboarding" } })}
             className="h-12 items-center justify-center rounded-2xl bg-amber active:opacity-80"
           >
             <Text className="text-h3 text-mascot-features">Continue</Text>
