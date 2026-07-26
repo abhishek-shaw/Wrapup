@@ -10,6 +10,7 @@ import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect, useState } from "react";
 
+import { PersistentRecordingBanner } from "@/components/recording-indicator";
 import { getDb } from "@/db/client";
 import { seedDevData } from "@/db/seed";
 import { useSettingsStore } from "@/store/settings";
@@ -45,5 +46,10 @@ export default function RootLayout() {
     return null;
   }
 
-  return <Stack screenOptions={{ headerShown: false }} />;
+  return (
+    <>
+      <Stack screenOptions={{ headerShown: false }} />
+      <PersistentRecordingBanner />
+    </>
+  );
 }

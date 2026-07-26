@@ -10,6 +10,12 @@ type PermissionCardProps = {
   iconBackgroundClassName: string;
   title: string;
   description: string;
+  /** Optional trailing action/status, e.g. an "Enable"/"Enabled" control —
+   * same convention as SettingRow's `control` prop. Cards without a natural
+   * point of use elsewhere (unlike calendar/mic, requested contextually) can
+   * request permission directly from here instead of staying purely
+   * descriptive. */
+  control?: React.ReactNode;
 };
 
 export function PermissionCard({
@@ -18,9 +24,10 @@ export function PermissionCard({
   iconBackgroundClassName,
   title,
   description,
+  control,
 }: PermissionCardProps) {
   return (
-    <View className="flex-row gap-3 rounded-xl bg-ink-surface p-4">
+    <View className="flex-row items-center gap-3 rounded-xl bg-ink-surface p-4">
       <View className={`h-9 w-9 items-center justify-center rounded-lg ${iconBackgroundClassName}`}>
         <Ionicons name={icon} size={18} color={iconColor} />
       </View>
@@ -28,6 +35,7 @@ export function PermissionCard({
         <Text className="text-h3 text-white">{title}</Text>
         <Text className="text-body-sm text-ink-secondary">{description}</Text>
       </View>
+      {control}
     </View>
   );
 }

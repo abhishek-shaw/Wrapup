@@ -92,3 +92,15 @@ export async function updateMeetingStatus(id: string, status: RecordingStatus): 
     id,
   ]);
 }
+
+/** Persists where the captured audio landed once recording stops. */
+export async function finishRecording(
+  id: string,
+  input: { audioFilePath: string; endedAt: string; durationSeconds: number },
+): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `UPDATE meetings SET audio_file_path = ?, ended_at = ?, duration_seconds = ?, updated_at = ? WHERE id = ?;`,
+    [input.audioFilePath, input.endedAt, input.durationSeconds, new Date().toISOString(), id],
+  );
+}

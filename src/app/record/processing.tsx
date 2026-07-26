@@ -7,6 +7,7 @@ import { ActivityIndicator, Pressable, SafeAreaView, Text, View } from "react-na
 import { images } from "@/constants/images";
 import { getMeeting, updateMeetingStatus } from "@/db/queries/meetings";
 import { indexMeeting } from "@/db/queries/search";
+import { useRecordingStore } from "@/store/recording";
 import { colors } from "@/theme";
 
 const STEPS = ["Transcribing audio", "Writing the summary", "Finding action items"];
@@ -16,6 +17,7 @@ export default function Processing() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [currentStep, setCurrentStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const finishRecordingState = useRecordingStore((state) => state.finish);
 
   useEffect(() => {
     if (currentStep >= STEPS.length) {
@@ -40,11 +42,13 @@ export default function Processing() {
           }
           // Only update to "ready" after indexing completes successfully
           await updateMeetingStatus(id, "ready");
+          finishRecordingState();
           if (isMounted) {
             router.replace(`/meeting/${id}`);
           }
         } catch {
           await updateMeetingStatus(id, "failed").catch(() => {});
+          finishRecordingState();
           if (isMounted) {
             setError("Failed to process meeting");
           }
@@ -60,7 +64,7 @@ export default function Processing() {
     }
     const timeout = setTimeout(() => setCurrentStep((prev) => prev + 1), 1500);
     return () => clearTimeout(timeout);
-  }, [currentStep, id, router]);
+  }, [currentStep, id, router, finishRecordingState]);
 
   if (error) {
     return (

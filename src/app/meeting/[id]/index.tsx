@@ -3,6 +3,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useState } from "react";
 import { Pressable, SafeAreaView, ScrollView, Text, View } from "react-native";
 
+import { MeetingAudioPlayer } from "@/components/meeting-audio-player";
 import { SummaryCard } from "@/components/summary-card";
 import { TodoItem } from "@/components/todo-item";
 import { getMeeting } from "@/db/queries/meetings";
@@ -93,6 +94,8 @@ export default function MeetingSummary() {
           </Text>
           <Text className="text-h1 text-white">{meeting.title}</Text>
         </View>
+
+        {meeting.audioFilePath ? <MeetingAudioPlayer audioFilePath={meeting.audioFilePath} /> : null}
 
         {summary ? (
           <SummaryCard label="Summary">
