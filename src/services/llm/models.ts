@@ -10,7 +10,7 @@
  * than wrapping start-to-finish like `ensureAsrModelsDownloaded` does — the
  * caller (download-model.tsx) needs the task instance to pause/resume it.
  */
-import { Directory, DownloadTask, File, Paths } from "expo-file-system";
+import { Directory, DownloadTask, File, Paths, type DownloadPauseState } from "expo-file-system";
 import * as Network from "expo-network";
 
 import { sha256HexOfStream } from "@/lib/sha256";
@@ -72,9 +72,19 @@ export function isModelDownloaded(tier: ModelTier): boolean {
   return file.exists && file.size === LLM_MODEL_SPECS[tier].sizeBytes;
 }
 
-/** Any downloaded tier ready to run, for screens that just need "is summarization available at all". */
-export function getReadyModelTier(): ModelTier | null {
-  return (Object.keys(LLM_MODEL_SPECS) as ModelTier[]).find(isModelDownloaded) ?? null;
+/** Every tier that's downloaded and ready to run, in fast/balanced/best_quality
+ * order — the source of truth for "which models does the user have," since
+ * multiple tiers can be kept on disk at once and switched between freely. */
+export function getDownloadedModelTiers(): ModelTier[] {
+  return (Object.keys(LLM_MODEL_SPECS) as ModelTier[]).filter(isModelDownloaded);
+}
+
+/** Combined size of every currently-downloaded tier — used to warn the user
+ * before starting a second/third download, since keeping multiple models
+ * around at once is now supported but adds up fast (up to ~8.4GB for all
+ * three). */
+export function getTotalDownloadedSizeBytes(): number {
+  return getDownloadedModelTiers().reduce((total, tier) => total + LLM_MODEL_SPECS[tier].sizeBytes, 0);
 }
 
 export function getModelSizeOnDiskBytes(tier: ModelTier): number | null {
@@ -113,9 +123,31 @@ export function createModelDownloadTask(
 }
 
 /**
- * Checksum-verification step required by AGENTS.md before marking a model
- * ready to use — runs once, right after a download completes. Deletes the
- * file on mismatch so a corrupt download can't silently masquerade as ready.
+ * Reconstructs a paused download from state saved via `DownloadTask.savable()`
+ * — used to pick a download back up after the app was killed and relaunched
+ * (see store/modelDownload.ts's restorePendingDownload), when the original
+ * `DownloadTask` instance no longer exists. The reconstructed task starts in
+ * the `paused` state; call `resumeAsync()` on it to continue transferring.
+ */
+export function resumeModelDownloadTask(
+  savedState: DownloadPauseState,
+  onProgress: (bytesWritten: number, totalBytes: number) => void,
+): DownloadTask {
+  const reportProgress = throttleDownloadProgress(onProgress);
+  return DownloadTask.fromSavable(savedState, {
+    onProgress: ({ bytesWritten, totalBytes }) => reportProgress(bytesWritten, totalBytes),
+  });
+}
+
+/**
+ * Checksum-verification step required by AGENTS.md before trusting a
+ * download long-term. Runs in the background after the model's already been
+ * marked ready off a fast size check (see store/settings.ts's
+ * verifyModelInBackground) rather than blocking the download screen — a
+ * multi-GB hash is real time even natively, and the size check alone is
+ * enough to unblock the user immediately. Deletes the file on mismatch so a
+ * corrupt download (most likely from a bad resumable-download resume) can't
+ * silently keep masquerading as ready.
  */
 export async function verifyDownloadedModel(
   tier: ModelTier,
@@ -126,8 +158,16 @@ export async function verifyDownloadedModel(
   if (!file.exists) return false;
 
   const totalBytes = file.size;
+  // Hashing reports progress once per 8MB batch (see lib/sha256's batching) —
+  // for a multi-GB file that's still hundreds of calls, so throttle the same
+  // way download progress already is rather than flooding the store with a
+  // React state update on every single batch.
+  const reportProgress = onProgress && throttleDownloadProgress((bytesRead, total) => {
+    onProgress(total > 0 ? Math.min(1, bytesRead / total) : 0);
+  });
+
   const digest = await sha256HexOfStream(file.readableStream(), (bytesRead) => {
-    onProgress?.(totalBytes > 0 ? Math.min(1, bytesRead / totalBytes) : 0);
+    reportProgress?.(bytesRead, totalBytes);
   });
 
   const verified = digest === spec.sha256;

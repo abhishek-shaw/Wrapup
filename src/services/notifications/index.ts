@@ -81,3 +81,76 @@ export async function scheduleTodoReminder(todo: Todo, preferences: TodoReminder
 export async function cancelTodoReminder(todoId: string): Promise<void> {
   await Notifications.cancelScheduledNotificationAsync(todoId).catch(() => {});
 }
+
+/**
+ * Fires once, immediately, when a background checksum verification (see
+ * store/settings.ts's verifyModelInBackground) finds that a downloaded model
+ * doesn't match its expected hash after all — the model's already been
+ * deleted by the time this is called, so this is purely informational.
+ * Same "always safe" no-op contract as the other notify/schedule functions here.
+ */
+export async function notifyModelVerificationFailed(modelLabel: string): Promise<void> {
+  try {
+    const granted = await getNotificationPermissionStatus();
+    if (!granted) return;
+
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "Model couldn't be verified",
+        body: `The ${modelLabel} model failed a background integrity check and was removed. Download it again from Settings.`,
+      },
+      trigger: null,
+    });
+  } catch {
+    // Swallow errors so this function never throws, matching the other notify/schedule functions here.
+  }
+}
+
+/**
+ * Fires once, immediately, when a background checksum verification (see
+ * store/settings.ts's verifyModelInBackground) confirms a downloaded model
+ * is intact — the model's already been usable since the size check passed,
+ * so this is just closing the loop on the "Verifying…" status shown in
+ * Settings/choose-model while the hash was running.
+ */
+export async function notifyModelVerified(modelLabel: string): Promise<void> {
+  try {
+    const granted = await getNotificationPermissionStatus();
+    if (!granted) return;
+
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "Model verified",
+        body: `The ${modelLabel} model passed its background integrity check.`,
+      },
+      trigger: null,
+    });
+  } catch {
+    // Swallow errors so this function never throws, matching the other notify/schedule functions here.
+  }
+}
+
+/**
+ * Fires once, immediately, when a recording finishes processing but no
+ * on-device LLM model is downloaded — the summary/action-item/chat steps in
+ * processing.tsx were skipped entirely rather than failed. `trigger: null`
+ * means "now", not scheduled for later. Same "always safe" no-op contract as
+ * scheduleTodoReminder: silently does nothing without notification
+ * permission, never throws.
+ */
+export async function notifyModelNeededForSummary(meetingTitle: string): Promise<void> {
+  try {
+    const granted = await getNotificationPermissionStatus();
+    if (!granted) return;
+
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "Download a model to see this summary",
+        body: `"${meetingTitle}" was recorded and transcribed, but needs an on-device model to summarize it and find action items.`,
+      },
+      trigger: null,
+    });
+  } catch {
+    // Swallow errors so this function never throws, matching scheduleTodoReminder/cancelTodoReminder.
+  }
+}

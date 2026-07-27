@@ -14,6 +14,7 @@ import {
 
 import { ChatBubble } from "@/components/chat-bubble";
 import { ChatInputBar } from "@/components/chat-input-bar";
+import { ModelNeededBanner } from "@/components/model-needed-banner";
 import { SuggestedQuestionChip } from "@/components/suggested-question-chip";
 import { createChatMessage, listChatMessages } from "@/db/queries/chat";
 import { getMeeting } from "@/db/queries/meetings";
@@ -169,15 +170,7 @@ export default function MeetingChat() {
 
         <View className="gap-3 px-5 pb-4">
           {!activeModelTier ? (
-            <Pressable
-              onPress={() => router.push("/settings/choose-model")}
-              className="flex-row items-center gap-2 rounded-2xl bg-ink-surface px-4 py-3 active:opacity-70"
-            >
-              <Ionicons name="download-outline" size={16} color={colors.ink.textSecondary} />
-              <Text className="flex-1 text-body-sm text-ink-secondary">
-                Download an on-device model in Settings to get answers.
-              </Text>
-            </Pressable>
+            <ModelNeededBanner label="Download an on-device model in Settings to get answers." />
           ) : null}
           {replyError ? <Text className="text-body-sm text-error">{replyError}</Text> : null}
           <View className="flex-row flex-wrap gap-2">

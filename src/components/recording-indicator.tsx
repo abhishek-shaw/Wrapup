@@ -1,6 +1,6 @@
 import { useRouter, usePathname } from "expo-router";
 import React, { useEffect, useState } from "react";
-import { Platform, Pressable, SafeAreaView, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 
 import { getCaptureStatus } from "@/services/recording";
 import { useRecordingStore } from "@/store/recording";
@@ -72,30 +72,20 @@ export function PersistentRecordingBanner() {
   if (pathname.startsWith("/record")) return null;
 
   return (
-    <SafeAreaView
-      pointerEvents="box-none"
-      style={{ position: "absolute", top: 0, left: 0, right: 0 }}
-    >
-      <View
-        className="items-center"
-        style={{ paddingTop: Platform.OS === "android" ? 16 : 8 }}
-      >
-        <RecordingIndicator
-          phase={recordingState === "recording" ? (isPaused ? "paused" : "recording") : "processing"}
-          label={
-            recordingState === "recording"
-              ? `${isPaused ? "Paused" : "Recording"} · ${formatDuration(elapsedSeconds)}`
-              : "Processing…"
-          }
-          onPress={() =>
-            router.push(
-              recordingState === "recording"
-                ? `/record/progress?id=${activeMeetingId}`
-                : `/record/processing?id=${activeMeetingId}`,
-            )
-          }
-        />
-      </View>
-    </SafeAreaView>
+    <RecordingIndicator
+      phase={recordingState === "recording" ? (isPaused ? "paused" : "recording") : "processing"}
+      label={
+        recordingState === "recording"
+          ? `${isPaused ? "Paused" : "Recording"} · ${formatDuration(elapsedSeconds)}`
+          : "Processing…"
+      }
+      onPress={() =>
+        router.push(
+          recordingState === "recording"
+            ? `/record/progress?id=${activeMeetingId}`
+            : `/record/processing?id=${activeMeetingId}`,
+        )
+      }
+    />
   );
 }

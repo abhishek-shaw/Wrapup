@@ -20,18 +20,13 @@ import {
   generateMeetingTitle,
   type ExtractedActionItem,
 } from "@/services/llm";
+import { notifyModelNeededForSummary } from "@/services/notifications";
 import { resolveAudioFileUri } from "@/services/recording";
 import { useRecordingStore } from "@/store/recording";
 import { useSettingsStore } from "@/store/settings";
 import { colors } from "@/theme";
 
 const STEPS = ["Transcribing audio", "Writing the summary", "Finding action items"];
-
-// Module-level Set to track which meetings are currently processing — prevents
-// duplicate transcription work from double-invoked effects (React StrictMode
-// double-mount, fast remounts, etc.) while preserving correct behavior for
-// genuinely distinct meetings running concurrently.
-const processingMeetings = new Set<string>();
 
 export default function Processing() {
   const router = useRouter();
@@ -96,6 +91,14 @@ export default function Processing() {
               }
             }
 
+            // No model was active, so the summarize/extract steps above were
+            // skipped entirely (see step 1/2 effects below) — let the user
+            // know there's a recording waiting on a model download, in case
+            // they've navigated away from this screen already.
+            if (!activeModelTier) {
+              notifyModelNeededForSummary(finalTitle).catch(() => {});
+            }
+
             // Clears any action items from a prior run before re-inserting —
             // this step also runs when reprocessing an already-"ready"
             // meeting (see the meeting detail screen's Reprocess button), so
@@ -144,14 +147,6 @@ export default function Processing() {
     }
 
     if (currentStep === 0) {
-      // Atomically claim the processing marker for this meetingId — if another
-      // mounted or remounted instance already owns it, return early without
-      // processing. Prevents duplicate transcription from double effects.
-      if (processingMeetings.has(id)) {
-        return;
-      }
-      processingMeetings.add(id);
-
       let isMounted = true;
       const transcribe = async () => {
         try {
@@ -186,20 +181,12 @@ export default function Processing() {
           // Local-only debug log (no transcript/audio content involved) —
           // see AGENTS.md Privacy & Network Rules.
           console.error("[ASR] transcription failed:", err);
-<<<<<<< HEAD
-          if (isMounted) setError("Failed to transcribe the recording");
-        } finally {
-          // Clear the marker when processing finishes (success or failure)
-          // for this meetingId.
-          processingMeetings.delete(id);
-=======
           // Without this, the meeting row stays "processing" forever — not
           // "failed" — which is indistinguishable in the UI from a recording
           // that's still actively being worked on, and looks stuck.
           await updateMeetingStatus(id, "failed").catch(() => {});
           const message = err instanceof Error && err.message ? err.message : "Failed to transcribe the recording";
           if (isMounted) setError(message);
->>>>>>> feature-llm-summary-chat
         }
       };
       transcribe();

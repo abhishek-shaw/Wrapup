@@ -7,6 +7,10 @@ type ModelTierCardProps = {
   description: string;
   selected: boolean;
   recommended?: boolean;
+  /** e.g. "Downloaded" or "Active" — distinct from `recommended` (a
+   * device-based suggestion) and shown inline rather than as a ribbon, since
+   * a card can be both recommended and already downloaded at once. */
+  statusLabel?: string;
   onPress: () => void;
 };
 
@@ -16,6 +20,7 @@ export function ModelTierCard({
   description,
   selected,
   recommended,
+  statusLabel,
   onPress,
 }: ModelTierCardProps) {
   return (
@@ -39,6 +44,11 @@ export function ModelTierCard({
         <Text className={`text-body-md ${selected ? "text-deep-amber" : "text-ink-secondary"}`}>
           {description}
         </Text>
+        {statusLabel ? (
+          <Text className={`text-caption font-semibold ${selected ? "text-deep-amber" : "text-amber"}`}>
+            {statusLabel}
+          </Text>
+        ) : null}
       </View>
     </Pressable>
   );
