@@ -9,15 +9,50 @@ import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect, useState } from "react";
+import { Platform, SafeAreaView, View } from "react-native";
 
 import { PersistentModelDownloadBanner } from "@/components/model-download-indicator";
 import { PersistentRecordingBanner } from "@/components/recording-indicator";
 import { getDb } from "@/db/client";
 import { seedDevData } from "@/db/seed";
 import { useModelDownloadStore } from "@/store/modelDownload";
+import { useRecordingStore } from "@/store/recording";
 import { useSettingsStore } from "@/store/settings";
 
 SplashScreen.preventAutoHideAsync();
+
+/** Stacks the recording and download banners so they never overlap when
+ * both are active simultaneously. The recording indicator must always be
+ * unambiguous (AGENTS.md), so it takes visual priority: recording banner
+ * first, download banner offset below it if needed. */
+function BannerContainer() {
+  const recordingState = useRecordingStore((state) => state.recordingState);
+  const activeMeetingId = useRecordingStore((state) => state.activeMeetingId);
+  const activeDownload = useModelDownloadStore((state) => state.activeDownload);
+
+  const showRecordingBanner = recordingState !== "idle" && activeMeetingId !== null;
+  const showDownloadBanner = activeDownload !== null && activeDownload.phase !== "done";
+
+  if (!showRecordingBanner && !showDownloadBanner) return null;
+
+  return (
+    <SafeAreaView
+      pointerEvents="box-none"
+      style={{ position: "absolute", top: 0, left: 0, right: 0 }}
+    >
+      <View
+        className="items-center"
+        style={{
+          paddingTop: Platform.OS === "android" ? 16 : 8,
+          gap: 8,
+        }}
+      >
+        <PersistentRecordingBanner />
+        <PersistentModelDownloadBanner />
+      </View>
+    </SafeAreaView>
+  );
+}
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
@@ -54,8 +89,7 @@ export default function RootLayout() {
   return (
     <>
       <Stack screenOptions={{ headerShown: false }} />
-      <PersistentRecordingBanner />
-      <PersistentModelDownloadBanner />
+      <BannerContainer />
     </>
   );
 }

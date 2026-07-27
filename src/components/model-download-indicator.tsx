@@ -1,6 +1,6 @@
 import { useRouter, usePathname } from "expo-router";
 import React from "react";
-import { Platform, Pressable, SafeAreaView, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 
 import { LLM_MODEL_SPECS } from "@/services/llm/models";
 import { useModelDownloadStore } from "@/store/modelDownload";
@@ -45,26 +45,22 @@ export function PersistentModelDownloadBanner() {
           : `Downloading ${modelName} model · ${percent}%`;
 
   return (
-    <SafeAreaView pointerEvents="box-none" style={{ position: "absolute", top: 0, left: 0, right: 0 }}>
-      <View className="items-center" style={{ paddingTop: Platform.OS === "android" ? 16 : 8 }}>
-        <Pressable
-          onPress={() =>
-            router.push({
-              pathname: "/settings/download-model",
-              params: {
-                tier: activeDownload.tier,
-                wifiOnly: activeDownload.wifiOnly.toString(),
-                origin: activeDownload.origin,
-              },
-            })
-          }
-          className="flex-row items-center gap-2 rounded-full px-4 py-2 active:opacity-80"
-          style={{ backgroundColor: "rgba(0,0,0,0.3)" }}
-        >
-          <View className={`h-2 w-2 rounded-full ${PHASE_DOT_CLASSES[activeDownload.phase]}`} />
-          <Text className={`text-body-md ${PHASE_TEXT_CLASSES[activeDownload.phase]}`}>{label}</Text>
-        </Pressable>
-      </View>
-    </SafeAreaView>
+    <Pressable
+      onPress={() =>
+        router.push({
+          pathname: "/settings/download-model",
+          params: {
+            tier: activeDownload.tier,
+            wifiOnly: activeDownload.wifiOnly.toString(),
+            origin: activeDownload.origin,
+          },
+        })
+      }
+      className="flex-row items-center gap-2 rounded-full px-4 py-2 active:opacity-80"
+      style={{ backgroundColor: "rgba(0,0,0,0.3)" }}
+    >
+      <View className={`h-2 w-2 rounded-full ${PHASE_DOT_CLASSES[activeDownload.phase]}`} />
+      <Text className={`text-body-md ${PHASE_TEXT_CLASSES[activeDownload.phase]}`}>{label}</Text>
+    </Pressable>
   );
 }

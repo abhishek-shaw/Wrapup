@@ -227,7 +227,7 @@ export async function extractActionItems(transcriptText: string, tier: ModelTier
           "Only include concrete tasks someone committed to — not general discussion topics. " +
           `${GROUNDING_RULE} ` +
           'For each item, set "ownerHint" to the person\'s name if the transcript names one, otherwise "". ' +
-          'Set "dueDate" to an ISO 8601 date (YYYY-MM-DD) only if the transcript states or clearly implies one, otherwise "". ' +
+          'Set "dueDate" to an ISO 8601 date (YYYY-MM-DD) only if the transcript contains an explicit, unambiguous date (like "by Friday" or "due March 15th"); do not infer or calculate relative dates. If no explicit date is stated, set "dueDate" to "". ' +
           "Return an empty items array if there are no clear action items. Respond with JSON only.",
       },
       {
@@ -301,21 +301,59 @@ export async function generateChatReply(params: {
   const { tier, transcriptText, meetingTitle, history } = params;
   const context = await getContext(tier);
   const profile = LLM_PROFILES[tier];
+  const nCtx = LLM_PROFILES[tier].nCtx;
+  const maxCompletionTokens = 400;
+
+  // Reserve context budget for system instructions, title, wrapper text, history, and completion.
+  const systemInstructionsPrefix =
+    `You are Wrapup, an on-device assistant answering questions about one specific meeting: "${meetingTitle}". ` +
+    `${GROUNDING_RULE} If the transcript doesn't contain the answer, say so plainly rather than guessing. ` +
+    `Keep answers brief and conversational.\n\nMeeting transcript:\n\n`;
+  const systemInstructionsTokens = Math.ceil(systemInstructionsPrefix.length / CHARS_PER_TOKEN);
+
+  // Estimate history token cost (conservative: each turn has role overhead + content).
+  const historyChars = history.reduce((sum, turn) => sum + turn.text.length + 20, 0); // +20 for role markers per turn
+  const historyTokens = Math.ceil(historyChars / CHARS_PER_TOKEN);
+
+  // Calculate remaining budget for transcript after reserving everything else.
+  const transcriptBudgetTokens = nCtx - PROMPT_WRAPPER_TOKENS - systemInstructionsTokens - historyTokens - maxCompletionTokens;
+  const maxTranscriptChars = Math.max(0, transcriptBudgetTokens * CHARS_PER_TOKEN);
+
+  // Truncate transcript to fit the remaining budget.
+  let finalTranscript = transcriptText;
+  if (transcriptText.length > maxTranscriptChars) {
+    finalTranscript = `[...earlier portion of the transcript omitted...]\n\n${transcriptText.slice(-maxTranscriptChars)}`;
+  }
+
+  // If history is still too large even after transcript truncation, trim oldest turns.
+  let trimmedHistory = history;
+  const totalEstimatedTokens = PROMPT_WRAPPER_TOKENS + systemInstructionsTokens + Math.ceil(finalTranscript.length / CHARS_PER_TOKEN) + historyTokens + maxCompletionTokens;
+  if (totalEstimatedTokens > nCtx && history.length > 1) {
+    // Keep at least the most recent user message (last turn must be user per contract).
+    const recentTurnsToKeep = [];
+    let accumulatedHistoryTokens = 0;
+    for (let i = history.length - 1; i >= 0; i--) {
+      const turnTokens = Math.ceil((history[i].text.length + 20) / CHARS_PER_TOKEN);
+      if (accumulatedHistoryTokens + turnTokens + PROMPT_WRAPPER_TOKENS + systemInstructionsTokens + Math.ceil(finalTranscript.length / CHARS_PER_TOKEN) + maxCompletionTokens > nCtx) {
+        break;
+      }
+      recentTurnsToKeep.unshift(history[i]);
+      accumulatedHistoryTokens += turnTokens;
+    }
+    trimmedHistory = recentTurnsToKeep.length > 0 ? recentTurnsToKeep : [history[history.length - 1]];
+  }
 
   const result = await context.completion({
     jinja: true,
     messages: [
       {
         role: "system",
-        content:
-          `You are Wrapup, an on-device assistant answering questions about one specific meeting: "${meetingTitle}". ` +
-          `${GROUNDING_RULE} If the transcript doesn't contain the answer, say so plainly rather than guessing. ` +
-          `Keep answers brief and conversational.\n\nMeeting transcript:\n\n${truncateTranscript(transcriptText, tier, 400)}`,
+        content: systemInstructionsPrefix + finalTranscript,
       },
-      ...history.map((turn) => ({ role: turn.role, content: turn.text })),
+      ...trimmedHistory.map((turn) => ({ role: turn.role, content: turn.text })),
     ],
     enable_thinking: true,
-    n_predict: 400,
+    n_predict: maxCompletionTokens,
     temperature: applyTemperatureOffset(0.3, tier),
     top_p: profile.topP,
     min_p: profile.minP,

@@ -87,6 +87,9 @@ let currentTask: DownloadTask | null = null;
 let pausedForBackgrounding = false;
 let pollInterval: ReturnType<typeof setInterval> | null = null;
 let listenersStarted = false;
+// Prevents concurrent finishSuccessfully calls for the same tier from racing
+// to activate/verify/cleanup — only the first call proceeds.
+let finishingTier: ModelTier | null = null;
 
 function stopPolling() {
   if (pollInterval) {
@@ -139,6 +142,10 @@ export const useModelDownloadStore = create<ModelDownloadState>((set, get) => {
   }
 
   async function finishSuccessfully(tier: ModelTier) {
+    // Re-entrancy guard: only the first finishSuccessfully call for this tier proceeds.
+    if (finishingTier === tier) return;
+    finishingTier = tier;
+
     stopPolling();
     await clearPersistedPauseState();
     // The size check that got us here is what unblocks the user immediately;
@@ -163,6 +170,7 @@ export const useModelDownloadStore = create<ModelDownloadState>((set, get) => {
         state.activeDownload?.tier === tier && state.activeDownload.phase === "done" ? { activeDownload: null } : state,
       );
       currentTask = null;
+      finishingTier = null;
     }, 1200);
   }
 
@@ -220,10 +228,16 @@ export const useModelDownloadStore = create<ModelDownloadState>((set, get) => {
       if (!download) return;
       if (nextState === "background" && download.phase === "downloading") {
         pausedForBackgrounding = true;
-        get().pauseDownload();
+        get().pauseDownload().catch(() => {
+          // Best-effort pause for backgrounding — if it fails, the download
+          // continues (which is fine; the transfer itself is background-safe).
+          pausedForBackgrounding = false;
+        });
       } else if (nextState === "active" && download.phase === "paused" && pausedForBackgrounding) {
         pausedForBackgrounding = false;
-        get().resumeDownload();
+        get().resumeDownload().catch(() => {
+          // Resume failure leaves it paused; user can retry manually.
+        });
       }
     });
   }
@@ -247,19 +261,27 @@ export const useModelDownloadStore = create<ModelDownloadState>((set, get) => {
         return;
       }
 
+      // Establish the single-flight guard immediately with a placeholder state
+      // before the async isOnWifi() runs, preventing concurrent calls from racing.
+      set({
+        activeDownload: {
+          tier,
+          origin,
+          wifiOnly,
+          phase: "waiting_for_wifi", // placeholder until Wi-Fi check completes
+          bytesWritten: 0,
+          totalBytes,
+          errorMessage: null,
+        },
+      });
+
       isOnWifi().then((onWifi) => {
         const wifiGateOpen = !wifiOnly || onWifi;
-        set({
-          activeDownload: {
-            tier,
-            origin,
-            wifiOnly,
-            phase: wifiGateOpen ? "downloading" : "waiting_for_wifi",
-            bytesWritten: 0,
-            totalBytes,
-            errorMessage: null,
-          },
-        });
+        set((state) =>
+          state.activeDownload?.tier === tier
+            ? { activeDownload: { ...state.activeDownload, phase: wifiGateOpen ? "downloading" : "waiting_for_wifi" } }
+            : state,
+        );
         if (wifiGateOpen) beginTransfer(tier);
       });
     },
@@ -270,10 +292,19 @@ export const useModelDownloadStore = create<ModelDownloadState>((set, get) => {
       if (!task || !download || download.phase !== "downloading") return;
       set({ activeDownload: { ...download, phase: "paused" } });
       stopPolling();
-      await task.pauseAsync();
-      // Re-read after the await — bytesWritten may have ticked further meanwhile.
-      const latest = get().activeDownload;
-      if (latest) await persistPauseState(latest);
+      try {
+        await task.pauseAsync();
+        // Re-read after the await — bytesWritten may have ticked further meanwhile.
+        const latest = get().activeDownload;
+        if (latest) await persistPauseState(latest);
+      } catch {
+        // If pauseAsync fails, the transfer may still be running — restore to "downloading".
+        const latest = get().activeDownload;
+        if (latest && latest.phase === "paused") {
+          set({ activeDownload: { ...latest, phase: "downloading" } });
+          startPolling(latest.tier);
+        }
+      }
     },
 
     resumeDownload: async () => {
@@ -284,7 +315,9 @@ export const useModelDownloadStore = create<ModelDownloadState>((set, get) => {
       if (download.wifiOnly && !onWifi) {
         // Wi-Fi-only gating per AGENTS.md, checked before resuming too — the
         // network listener in ensureListeners() picks this back up once
-        // Wi-Fi reconnects.
+        // Wi-Fi reconnects. Clear pausedForBackgrounding so this doesn't
+        // auto-resume indefinitely when brought back to foreground without Wi-Fi.
+        pausedForBackgrounding = false;
         set({ activeDownload: { ...download, phase: "waiting_for_wifi" } });
         return;
       }
@@ -315,6 +348,7 @@ export const useModelDownloadStore = create<ModelDownloadState>((set, get) => {
       const tier = get().activeDownload?.tier;
       currentTask?.cancel();
       currentTask = null;
+      finishingTier = null;
       if (tier) deleteModel(tier);
       clearPersistedPauseState();
       set({ activeDownload: null });
@@ -322,6 +356,7 @@ export const useModelDownloadStore = create<ModelDownloadState>((set, get) => {
 
     clearDownload: () => {
       currentTask = null;
+      finishingTier = null;
       set({ activeDownload: null });
     },
 
