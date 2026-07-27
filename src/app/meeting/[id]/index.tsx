@@ -4,6 +4,7 @@ import React, { useCallback, useState } from "react";
 import { Alert, Pressable, SafeAreaView, ScrollView, Text, TextInput, View } from "react-native";
 
 import { MeetingAudioPlayer } from "@/components/meeting-audio-player";
+import { ModelNeededBanner } from "@/components/model-needed-banner";
 import { SummaryCard } from "@/components/summary-card";
 import { TodoItem } from "@/components/todo-item";
 import { TranscriptView } from "@/components/transcript-view";
@@ -13,6 +14,7 @@ import { getSummary } from "@/db/queries/summaries";
 import { deleteTodosForMeeting } from "@/db/queries/todos";
 import { getTranscript } from "@/db/queries/transcripts";
 import { deleteAudioFile } from "@/services/recording";
+import { useSettingsStore } from "@/store/settings";
 import { useTodosStore } from "@/store/todos";
 import { colors } from "@/theme";
 import type { Meeting, Summary, Transcript } from "@/types/models";
@@ -31,6 +33,7 @@ export default function MeetingSummary() {
   const loadTodos = useTodosStore((state) => state.load);
   const toggleTodo = useTodosStore((state) => state.toggle);
   const actionItems = allTodos.filter((todo) => todo.meetingId === id);
+  const activeModelTier = useSettingsStore((state) => state.activeModelTier);
 
   const loadData = useCallback(async () => {
     try {
@@ -105,6 +108,14 @@ export default function MeetingSummary() {
       </SafeAreaView>
     );
   }
+
+  // Pipeline finished fine (status is "ready", not "failed") but produced no
+  // summary — the only way that happens is no model being active when
+  // processing.tsx ran the summarize/extract steps. Checked against the
+  // *current* activeModelTier rather than a stored flag, so this banner
+  // clears itself the moment the user downloads a model, without needing a
+  // reprocess to update any stored "why" state.
+  const needsModel = meeting.status === "ready" && !summary && !activeModelTier;
 
   const timeLabel = new Date(meeting.startedAt).toLocaleTimeString(undefined, {
     hour: "numeric",
@@ -194,6 +205,10 @@ export default function MeetingSummary() {
         ) : null}
 
         {meeting.audioFilePath ? <MeetingAudioPlayer audioFilePath={meeting.audioFilePath} /> : null}
+
+        {needsModel ? (
+          <ModelNeededBanner label="Download an on-device model in Settings to get a summary and action items for this recording." />
+        ) : null}
 
         {summary ? (
           <SummaryCard label="Summary">

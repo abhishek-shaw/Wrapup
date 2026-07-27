@@ -10,9 +10,11 @@ import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect, useState } from "react";
 
+import { PersistentModelDownloadBanner } from "@/components/model-download-indicator";
 import { PersistentRecordingBanner } from "@/components/recording-indicator";
 import { getDb } from "@/db/client";
 import { seedDevData } from "@/db/seed";
+import { useModelDownloadStore } from "@/store/modelDownload";
 import { useSettingsStore } from "@/store/settings";
 
 SplashScreen.preventAutoHideAsync();
@@ -32,6 +34,9 @@ export default function RootLayout() {
       .then(() => seedDevData())
       .then(() => setDbReady(true));
     loadOnboardingStatus();
+    // Picks up a download that was paused (by the user, or by this app going
+    // to background) before it got killed — see store/modelDownload.ts.
+    useModelDownloadStore.getState().restorePendingDownload();
   }, [loadOnboardingStatus]);
 
   const ready = (fontsLoaded || !!fontError) && dbReady && onboardingComplete !== null;
@@ -50,6 +55,7 @@ export default function RootLayout() {
     <>
       <Stack screenOptions={{ headerShown: false }} />
       <PersistentRecordingBanner />
+      <PersistentModelDownloadBanner />
     </>
   );
 }

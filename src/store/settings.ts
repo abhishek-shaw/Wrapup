@@ -3,8 +3,13 @@ import { create } from "zustand";
 
 import { getCalendarPermissionStatus, requestCalendarPermission } from "@/services/calendar";
 import { releaseLlmContext } from "@/services/llm";
-import { deleteModel, isModelDownloaded } from "@/services/llm/models";
-import { getNotificationPermissionStatus, requestNotificationPermission } from "@/services/notifications";
+import { deleteModel, getDownloadedModelTiers, isModelDownloaded, LLM_MODEL_SPECS, verifyDownloadedModel } from "@/services/llm/models";
+import {
+  getNotificationPermissionStatus,
+  notifyModelVerificationFailed,
+  notifyModelVerified,
+  requestNotificationPermission,
+} from "@/services/notifications";
 import type { ModelTier } from "@/types/models";
 
 const ONBOARDING_COMPLETE_KEY = "wrapup.onboardingComplete";
@@ -53,18 +58,58 @@ type SettingsState = {
   setReminderLeadTimeMinutes: (minutes: number) => Promise<void>;
 
   /**
-   * The tier that's currently downloaded and ready to run — null if none is.
+   * The tier currently used for summarization/action items/chat — null if
+   * none is. Multiple tiers can be downloaded and kept on disk at once (see
+   * getDownloadedModelTiers); this is just which one is *active* right now.
    * Not the same as "the user's last selection mid-download"; that's owned
    * locally by the choose-model/download-model screens until the download
    * actually finishes, at which point they call setActiveModelTier.
    */
   activeModelTier: ModelTier | null;
+  /**
+   * Reactive mirror of getDownloadedModelTiers() — the source of truth is
+   * still the filesystem, but Settings/choose-model need to re-render when
+   * it changes, and a plain isModelDownloaded()/getDownloadedModelTiers()
+   * call inside a render body doesn't trigger a re-render on its own when
+   * nothing else in the store changes (e.g. deleting a non-active tier used
+   * to leave the row showing "Downloaded" until something unrelated forced a
+   * re-render). Kept in sync by refreshDownloadedTiers.
+   */
+  downloadedTiers: ModelTier[];
+  refreshDownloadedTiers: () => void;
   downloadOverWifiOnly: boolean;
   loadModelSettings: () => Promise<void>;
+  /** Pure preference switch to an already-downloaded tier — no download, no
+   * re-verification. Callers must only pass a tier that isModelDownloaded. */
   setActiveModelTier: (tier: ModelTier | null) => Promise<void>;
   setDownloadOverWifiOnly: (enabled: boolean) => Promise<void>;
-  /** Deletes the active model's file on disk and clears activeModelTier. */
-  deleteActiveModel: () => Promise<void>;
+  /**
+   * Deletes one tier's model file on disk. If that tier was the active one,
+   * falls back to another still-downloaded tier automatically (the user
+   * clearly still wants AI features if they kept another model around) —
+   * only clears activeModelTier to null if nothing else is left. Always
+   * refreshes downloadedTiers, regardless of whether the deleted tier was active.
+   */
+  deleteModelTier: (tier: ModelTier) => Promise<void>;
+  /**
+   * Fraction (0-1) of background checksum verification completed, keyed by
+   * tier (see verifyModelInBackground) — a tier's presence as a key means
+   * it's actively being verified; absence means it's not. Surfaced as
+   * "Verifying… NN%" in Settings/choose-model, since the native hash work is
+   * real CPU load that can make the rest of the app feel sluggish while it runs.
+   */
+  verifyingProgress: Partial<Record<ModelTier, number>>;
+  /**
+   * Fire-and-forget full checksum verification, kicked off right after a
+   * fresh download is marked ready off its fast size check (see
+   * download-model.tsx's finalize). Not awaited by callers. Adds/removes
+   * `tier` from verifyingTiers for the UI status, and either way notifies
+   * the user once it settles: on mismatch, deletes the file, falls back the
+   * active tier the same way deleteModelTier does, and notifies that it was
+   * removed; on success, notifies that it checked out — all without
+   * blocking anything the user is doing in the meantime.
+   */
+  verifyModelInBackground: (tier: ModelTier) => void;
 };
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -126,6 +171,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   activeModelTier: null,
+  downloadedTiers: [],
+  refreshDownloadedTiers: () => set({ downloadedTiers: getDownloadedModelTiers() }),
   downloadOverWifiOnly: true,
   loadModelSettings: async () => {
     const [storedTier, storedWifiOnly] = await Promise.all([
@@ -140,6 +187,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const stillDownloaded = tier !== null && isModelDownloaded(tier);
     set({
       activeModelTier: stillDownloaded ? tier : null,
+      downloadedTiers: getDownloadedModelTiers(),
       downloadOverWifiOnly: storedWifiOnly === null ? true : storedWifiOnly === "true",
     });
   },
@@ -155,12 +203,61 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     await AsyncStorage.setItem(DOWNLOAD_OVER_WIFI_ONLY_KEY, enabled.toString());
     set({ downloadOverWifiOnly: enabled });
   },
-  deleteActiveModel: async () => {
-    const tier = get().activeModelTier;
-    if (!tier) return;
-    await releaseLlmContext();
+  deleteModelTier: async (tier: ModelTier) => {
+    const wasActive = get().activeModelTier === tier;
+    // Only release the native context if it's the one being deleted —
+    // removing a different, inactive tier's file shouldn't disturb a
+    // session currently running on the active model.
+    if (wasActive) {
+      await releaseLlmContext();
+    }
     deleteModel(tier);
-    await AsyncStorage.removeItem(ACTIVE_MODEL_TIER_KEY);
-    set({ activeModelTier: null });
+    // Always refresh, even when the deleted tier wasn't active — otherwise
+    // deleting a secondary model leaves Settings/choose-model showing it as
+    // still "Downloaded" until something unrelated happens to re-render them.
+    get().refreshDownloadedTiers();
+    if (!wasActive) return;
+
+    // Fall back to another still-downloaded tier rather than dropping to
+    // null — keeping a second model around is a clear signal the user still
+    // wants AI features. getDownloadedModelTiers() returns fast/balanced/
+    // best_quality order, so this picks the lightest remaining tier first.
+    const fallbackTier = getDownloadedModelTiers()[0] ?? null;
+    if (fallbackTier) {
+      await AsyncStorage.setItem(ACTIVE_MODEL_TIER_KEY, fallbackTier);
+    } else {
+      await AsyncStorage.removeItem(ACTIVE_MODEL_TIER_KEY);
+    }
+    set({ activeModelTier: fallbackTier });
+  },
+  verifyingProgress: {},
+  verifyModelInBackground: (tier: ModelTier) => {
+    set((state) => ({ verifyingProgress: { ...state.verifyingProgress, [tier]: 0 } }));
+    verifyDownloadedModel(tier, (fraction) => {
+      set((state) => ({ verifyingProgress: { ...state.verifyingProgress, [tier]: fraction } }));
+    })
+      .then(async (verified) => {
+        if (verified) {
+          await notifyModelVerified(LLM_MODEL_SPECS[tier].label);
+          return;
+        }
+        // verifyDownloadedModel already deleted the corrupt file — reuse
+        // deleteModelTier purely for its "release context + fall back the
+        // active tier" side effects, same as an explicit user delete.
+        await get().deleteModelTier(tier);
+        await notifyModelVerificationFailed(LLM_MODEL_SPECS[tier].label);
+      })
+      .catch(() => {
+        // Best-effort background check — an IO error reading the file back
+        // isn't proof of corruption, so leave the model as-is rather than
+        // deleting it on a hunch.
+      })
+      .finally(() => {
+        set((state) => {
+          const next = { ...state.verifyingProgress };
+          delete next[tier];
+          return { verifyingProgress: next };
+        });
+      });
   },
 }));

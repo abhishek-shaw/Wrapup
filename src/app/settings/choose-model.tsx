@@ -1,10 +1,12 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
-import { Pressable, SafeAreaView, ScrollView, Switch, Text, View } from "react-native";
+import { Alert, Pressable, SafeAreaView, ScrollView, Switch, Text, View } from "react-native";
 
 import { ModelTierCard } from "@/components/model-tier-card";
 import { SettingRow } from "@/components/setting-row";
+import { getRecommendedModelTier } from "@/services/llm/device";
 import { LLM_MODEL_SPECS } from "@/services/llm/models";
+import { useModelDownloadStore } from "@/store/modelDownload";
 import { useSettingsStore } from "@/store/settings";
 import { colors } from "@/theme";
 import type { ModelTier } from "@/types/models";
@@ -13,13 +15,11 @@ const TIERS: {
   tier: ModelTier;
   title: string;
   description: string;
-  recommended?: boolean;
 }[] = [
   {
     tier: "fast",
     title: "Fast",
     description: "Quicker summaries, good for short meetings. Best on older phones.",
-    recommended: true,
   },
   {
     tier: "balanced",
@@ -42,14 +42,22 @@ export default function ChooseModel() {
   const { origin: originParam } = useLocalSearchParams<{ origin?: "onboarding" | "settings" }>();
   const origin: "onboarding" | "settings" = originParam === "onboarding" ? "onboarding" : "settings";
   const activeModelTier = useSettingsStore((state) => state.activeModelTier);
+  const setActiveModelTier = useSettingsStore((state) => state.setActiveModelTier);
+  const downloadedTiers = useSettingsStore((state) => state.downloadedTiers);
+  const verifyingProgress = useSettingsStore((state) => state.verifyingProgress);
   const wifiOnly = useSettingsStore((state) => state.downloadOverWifiOnly);
   const setDownloadOverWifiOnly = useSettingsStore((state) => state.setDownloadOverWifiOnly);
   const completeOnboarding = useSettingsStore((state) => state.completeOnboarding);
-  // Fast is the onboarding default — small enough that first-run setup
-  // doesn't stall on a multi-GB download before the user can do anything.
-  // Balanced stays the default when reached from Settings, matching its
-  // "Recommended" badge below.
-  const [selected, setSelected] = useState<ModelTier>(activeModelTier ?? "fast");
+  const activeDownload = useModelDownloadStore((state) => state.activeDownload);
+  // Recommended purely from the device's total RAM (see services/llm/device
+  // for the reasoning behind the thresholds) — guidance only, every tier
+  // stays fully selectable regardless of what's recommended. Falls back to
+  // "fast" if RAM can't be read (e.g. web preview), the safest default.
+  const recommendedTier = getRecommendedModelTier();
+  // An existing user's already-downloaded tier always wins over the
+  // recommendation — re-visiting this screen shouldn't second-guess a
+  // choice they already made.
+  const [selected, setSelected] = useState<ModelTier>(activeModelTier ?? recommendedTier);
 
   // Mark onboarding complete the moment this step is reached rather than
   // waiting for a download to finish or for the user to explicitly skip —
@@ -72,6 +80,48 @@ export default function ChooseModel() {
     }
   };
 
+  // Multiple tiers can be downloaded and kept on disk at once — switching to
+  // one that's already there is a pure preference change, no re-download or
+  // re-verification needed (see store/settings.ts's setActiveModelTier).
+  const selectedDownloaded = downloadedTiers.includes(selected);
+  const selectedActive = activeModelTier === selected;
+
+  const handleUseSelected = async () => {
+    await setActiveModelTier(selected);
+    router.replace(origin === "onboarding" ? "/today" : "/settings");
+  };
+
+  const handleDownloadSelected = () => {
+    // Only one download runs at a time (see store/modelDownload.ts) — send
+    // the user to the one already in flight instead of silently no-oping.
+    if (activeDownload && activeDownload.tier !== selected) {
+      Alert.alert(
+        "A download is already in progress",
+        `Wait for the ${LLM_MODEL_SPECS[activeDownload.tier].label} model to finish (or cancel it) before starting another.`,
+        [
+          { text: "OK", style: "cancel" },
+          {
+            text: "Go to download",
+            onPress: () =>
+              router.push({
+                pathname: "/settings/download-model",
+                params: {
+                  tier: activeDownload.tier,
+                  wifiOnly: activeDownload.wifiOnly.toString(),
+                  origin: activeDownload.origin,
+                },
+              }),
+          },
+        ],
+      );
+      return;
+    }
+    router.push({
+      pathname: "/settings/download-model",
+      params: { tier: selected, wifiOnly: wifiOnly.toString(), origin },
+    });
+  };
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.ink.background }}>
       <ScrollView className="flex-1 px-5 pt-8" contentContainerClassName="gap-6 pb-6">
@@ -80,6 +130,10 @@ export default function ChooseModel() {
           <Text className="text-body-lg text-ink-secondary">
             This downloads once and runs entirely on your phone from then on. You can change it later in
             settings.
+          </Text>
+          <Text className="text-body-sm text-ink-secondary">
+            Based on your device&apos;s memory, we recommend{" "}
+            {TIERS.find((item) => item.tier === recommendedTier)?.title}.
           </Text>
         </View>
 
@@ -91,7 +145,20 @@ export default function ChooseModel() {
               size={sizeLabel(item.tier)}
               description={item.description}
               selected={selected === item.tier}
-              recommended={item.recommended}
+              recommended={item.tier === recommendedTier}
+              statusLabel={(() => {
+                const isActive = activeModelTier === item.tier;
+                const verifyFraction = verifyingProgress[item.tier];
+                const isVerifying = verifyFraction !== undefined;
+                // "Active" always wins over "Verifying…" — the model is
+                // already usable the instant it's active (verification is a
+                // background integrity check that runs after the fact), so
+                // hiding that behind "Verifying…" would wrongly suggest it
+                // isn't ready yet.
+                if (isActive) return isVerifying ? `Active · Verifying… ${Math.round(verifyFraction * 100)}%` : "Active";
+                if (isVerifying) return `Verifying… ${Math.round(verifyFraction * 100)}%`;
+                return downloadedTiers.includes(item.tier) ? "Downloaded" : undefined;
+              })()}
               onPress={() => setSelected(item.tier)}
             />
           ))}
@@ -113,17 +180,25 @@ export default function ChooseModel() {
         </View>
 
         <View className="gap-3">
-          <Pressable
-            onPress={() =>
-              router.push({
-                pathname: "/settings/download-model",
-                params: { tier: selected, wifiOnly: wifiOnly.toString(), origin },
-              })
-            }
-            className="h-14 items-center justify-center rounded-2xl bg-amber active:opacity-80"
-          >
-            <Text className="text-h3 text-mascot-features">Download and continue</Text>
-          </Pressable>
+          {selectedActive ? (
+            <View className="h-14 items-center justify-center rounded-2xl border border-white/10">
+              <Text className="text-h3 text-ink-secondary">This model is already active</Text>
+            </View>
+          ) : selectedDownloaded ? (
+            <Pressable
+              onPress={handleUseSelected}
+              className="h-14 items-center justify-center rounded-2xl bg-amber active:opacity-80"
+            >
+              <Text className="text-h3 text-mascot-features">Use this model</Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              onPress={handleDownloadSelected}
+              className="h-14 items-center justify-center rounded-2xl bg-amber active:opacity-80"
+            >
+              <Text className="text-h3 text-mascot-features">Download and continue</Text>
+            </Pressable>
+          )}
           <Pressable onPress={handleSkip}>
             <Text className="text-center text-caption text-ink-secondary">
               Or Click Here to skip for now — you can download a model anytime from settings

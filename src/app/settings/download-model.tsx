@@ -1,30 +1,15 @@
 import { Ionicons } from "@expo/vector-icons";
-import type { DownloadTask } from "expo-file-system";
 import { Image } from "expo-image";
-import * as Network from "expo-network";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect } from "react";
 import { Alert, Pressable, SafeAreaView, Text, View } from "react-native";
 
 import { images } from "@/constants/images";
-import {
-  LLM_MODEL_SPECS,
-  createModelDownloadTask,
-  deleteModel,
-  isModelDownloaded,
-  verifyDownloadedModel,
-} from "@/services/llm/models";
-import { useSettingsStore } from "@/store/settings";
+import { getTotalDownloadedSizeBytes, isModelDownloaded, LLM_MODEL_SPECS } from "@/services/llm/models";
+import { useModelDownloadStore } from "@/store/modelDownload";
 import { colors } from "@/theme";
 import type { ModelTier } from "@/types/models";
 
-const MODEL_NAMES: Record<ModelTier, string> = {
-  fast: "Fast",
-  balanced: "Balanced",
-  best_quality: "Best quality",
-};
-
-type Phase = "waiting_for_wifi" | "downloading" | "paused" | "verifying" | "done" | "error";
 type Origin = "onboarding" | "settings";
 
 export default function DownloadModel() {
@@ -37,134 +22,60 @@ export default function DownloadModel() {
   const tier: ModelTier = tierParam ?? "balanced";
   const origin: Origin = originParam === "onboarding" ? "onboarding" : "settings";
   const isWifiOnly = wifiOnly !== "false";
-  const setActiveModelTier = useSettingsStore((state) => state.setActiveModelTier);
 
-  const networkState = Network.useNetworkState();
-  const isOnWifi = networkState.type === Network.NetworkStateType.WIFI;
-  const wifiGateOpen = !isWifiOnly || isOnWifi;
-
-  const [phase, setPhase] = useState<Phase>(wifiGateOpen ? "downloading" : "waiting_for_wifi");
-  const [bytesWritten, setBytesWritten] = useState(0);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const taskRef = useRef<DownloadTask | null>(null);
-  const startedRef = useRef(false);
-  const finalizedRef = useRef(false);
-  const cancelledRef = useRef(false);
+  const activeDownload = useModelDownloadStore((state) => state.activeDownload);
+  const startDownload = useModelDownloadStore((state) => state.startDownload);
+  const pauseDownload = useModelDownloadStore((state) => state.pauseDownload);
+  const resumeDownload = useModelDownloadStore((state) => state.resumeDownload);
+  const cancelDownload = useModelDownloadStore((state) => state.cancelDownload);
+  const clearDownload = useModelDownloadStore((state) => state.clearDownload);
 
   const spec = LLM_MODEL_SPECS[tier];
-  const modelName = MODEL_NAMES[tier];
+  const modelName = spec.label;
   const totalBytes = spec.sizeBytes;
 
-  const finalize = async () => {
-    if (finalizedRef.current) return;
-    finalizedRef.current = true;
-    setPhase("verifying");
-    setBytesWritten(0);
-    const verified = await verifyDownloadedModel(tier, (fraction) => setBytesWritten(Math.round(fraction * totalBytes)));
-    if (!verified) {
-      finalizedRef.current = false;
-      setErrorMessage("The downloaded file didn't match what we expected. Please try again.");
-      setPhase("error");
-      return;
-    }
-    await setActiveModelTier(tier);
-    setPhase("done");
+  // Only relevant for an actual new download — not when re-verifying a file
+  // that's already on disk, and not while a download (possibly this very
+  // tier, e.g. restored after an app relaunch) is already in progress. Warns
+  // before adding a second/third model rather than before every download.
+  const alreadyDownloadedBytes = getTotalDownloadedSizeBytes();
+  const needsStorageConfirmation = !activeDownload && alreadyDownloadedBytes > 0 && !isModelDownloaded(tier);
+
+  // Kicks the download off once, on mount, unless it's already in progress
+  // (reached via the persistent banner, or restored from a previous
+  // session) or still waiting on the storage-confirmation tap below.
+  useEffect(() => {
+    if (activeDownload || needsStorageConfirmation) return;
+    startDownload({ tier, origin, wifiOnly: isWifiOnly });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const done = activeDownload?.phase === "done";
+  useEffect(() => {
+    if (!done) return;
     // Onboarding already marks itself complete when the user reaches
     // choose-model (see that screen), so this is purely about where to land.
-    setTimeout(() => {
+    const timeout = setTimeout(() => {
       router.replace(origin === "onboarding" ? "/today" : "/settings");
     }, 900);
+    return () => clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [done]);
+
+  const handleConfirmStorage = () => startDownload({ tier, origin, wifiOnly: isWifiOnly });
+
+  // startDownload() no-ops while activeDownload still exists, so a retry
+  // after an error has to clear the stale ("error") entry first.
+  const handleRetry = () => {
+    clearDownload();
+    startDownload({ tier, origin, wifiOnly: isWifiOnly });
   };
 
-  const startDownload = async () => {
-    // Already on disk from an earlier session — finishing up is just a
-    // checksum + activation, no network call at all, so this runs
-    // regardless of the Wi-Fi gate below (see the mount effect).
-    if (isModelDownloaded(tier)) {
-      await finalize();
-      return;
-    }
-    try {
-      setPhase("downloading");
-      setErrorMessage(null);
-      const task = createModelDownloadTask(tier, (written) => setBytesWritten(written));
-      taskRef.current = task;
-      const result = await task.downloadAsync();
-      if (result === null) {
-        // Paused mid-transfer — pauseAsync()/resumeAsync() below drive the rest.
-        return;
-      }
-      await finalize();
-    } catch {
-      if (!finalizedRef.current && !cancelledRef.current) {
-        setErrorMessage("The download couldn't finish. Check your connection and try again.");
-        setPhase("error");
-      }
-    }
-  };
-
-  // Picks up an already-downloaded file the instant this screen mounts,
-  // independent of Wi-Fi state — gating that on the network gate would
-  // strand a user who already has the model on a "Waiting for Wi-Fi"
-  // screen for no reason, since finishing up needs no network call.
-  useEffect(() => {
-    if (startedRef.current || !isModelDownloaded(tier)) return;
-    startedRef.current = true;
-    startDownload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tier]);
-
-  // Gates the *start* of an actual network download, per AGENTS.md ("checked
-  // before starting or resuming") — re-runs once wifiGateOpen flips true
-  // (Wi-Fi connects), and startedRef prevents it from firing again after
-  // that (including if the effect above already handled an already-downloaded
-  // file). Resuming after a pause has its own gate check in handlePauseResume.
-  useEffect(() => {
-    if (!wifiGateOpen || startedRef.current) return;
-    startedRef.current = true;
-    startDownload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wifiGateOpen]);
-
-  // Independent safety net for a `DownloadTask` bug observed after a
-  // pause→resume→complete cycle: the underlying network transfer finishes
-  // (confirmed via OS-level logs and the file landing on disk at the exact
-  // expected size), but the `resumeAsync()`/`downloadAsync()` promise never
-  // resolves, leaving the UI stuck at 100% forever with no way out. Rather
-  // than trust progress events (which is what left this stuck in the first
-  // place), poll the filesystem directly while a download is in flight —
-  // this catches completion regardless of whether the native promise or
-  // progress callback ever fires again.
-  useEffect(() => {
-    if (phase !== "downloading") return;
-    const interval = setInterval(() => {
-      if (!finalizedRef.current && isModelDownloaded(tier)) {
-        finalize();
-      }
-    }, 2000);
-    return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, tier]);
-
-  const handlePauseResume = async () => {
-    const task = taskRef.current;
-    if (!task) return;
-    if (phase === "downloading") {
-      setPhase("paused");
-      await task.pauseAsync();
-    } else if (phase === "paused") {
-      if (isWifiOnly && !isOnWifi) return; // gate resume on Wi-Fi too, per AGENTS.md
-      setPhase("downloading");
-      try {
-        const result = await task.resumeAsync();
-        if (result === null) return; // paused again
-        await finalize();
-      } catch {
-        if (!finalizedRef.current && !cancelledRef.current) {
-          setErrorMessage("The download couldn't finish. Check your connection and try again.");
-          setPhase("error");
-        }
-      }
+  const handlePauseResume = () => {
+    if (activeDownload?.phase === "downloading") {
+      pauseDownload();
+    } else if (activeDownload?.phase === "paused") {
+      resumeDownload();
     }
   };
 
@@ -175,45 +86,81 @@ export default function DownloadModel() {
         text: "Cancel download",
         style: "destructive",
         onPress: () => {
-          cancelledRef.current = true;
-          taskRef.current?.cancel();
-          deleteModel(tier);
+          cancelDownload();
           router.back();
         },
       },
     ]);
   };
 
-  const handleRetry = () => {
-    setErrorMessage(null);
-    startedRef.current = false;
-    setBytesWritten(0);
-    if (wifiGateOpen) {
-      startedRef.current = true;
-      startDownload();
-    } else {
-      setPhase("waiting_for_wifi");
+  // Leaving is safe now — progress lives in the store regardless of whether
+  // this screen is mounted, and PersistentModelDownloadBanner keeps showing
+  // status from anywhere else in the app. Only "done"/"error" need clearing
+  // so a later visit to this screen (or the banner) doesn't show stale state.
+  const handleBack = () => {
+    if (activeDownload?.phase === "done" || activeDownload?.phase === "error") {
+      clearDownload();
     }
+    router.back();
   };
 
-  const totalGb = (totalBytes / 1e9).toFixed(2);
+  if (needsStorageConfirmation) {
+    const alreadyDownloadedGb = (alreadyDownloadedBytes / 1e9).toFixed(2);
+    const combinedGb = ((alreadyDownloadedBytes + totalBytes) / 1e9).toFixed(2);
+    const totalGb = (totalBytes / 1e9).toFixed(2);
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.ink.background }}>
+        <View className="flex-1 items-center justify-center gap-8 px-8">
+          <Image source={images.mascotLogo} style={{ width: 96, height: 96 }} contentFit="contain" />
+          <View className="items-center gap-2">
+            <Text className="text-center text-h1 text-white">Download {modelName} model?</Text>
+            <Text className="text-center text-body-lg text-ink-secondary">
+              You already have {alreadyDownloadedGb} GB of on-device models downloaded. Adding {modelName} ({totalGb}{" "}
+              GB) brings your total to {combinedGb} GB.
+            </Text>
+          </View>
+          <View className="w-full gap-3">
+            <Pressable
+              onPress={handleConfirmStorage}
+              className="h-14 items-center justify-center rounded-2xl bg-amber active:opacity-80"
+            >
+              <Text className="text-h3 text-mascot-features">Continue download</Text>
+            </Pressable>
+            <Pressable onPress={() => router.back()} className="items-center py-1 active:opacity-70">
+              <Text className="text-center text-body-sm text-ink-secondary">Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!activeDownload) return null; // brief window while startDownload's Wi-Fi check resolves
+
+  const { phase, bytesWritten, errorMessage } = activeDownload;
+  const downloadTotalBytes = activeDownload.totalBytes;
+  const totalGb = (downloadTotalBytes / 1e9).toFixed(2);
   const downloadedGb = (bytesWritten / 1e9).toFixed(2);
-  const progressPercent = totalBytes > 0 ? Math.min(100, Math.round((bytesWritten / totalBytes) * 100)) : 0;
-  const done = phase === "done";
+  const progressPercent =
+    downloadTotalBytes > 0 ? Math.min(100, Math.round((bytesWritten / downloadTotalBytes) * 100)) : 0;
 
   const statusText =
     phase === "waiting_for_wifi"
       ? "Waiting for Wi-Fi — connect to Wi-Fi to continue, or turn off Wi-Fi-only on the previous screen."
-      : phase === "verifying"
-        ? "Verifying the download…"
-        : phase === "error"
-          ? (errorMessage ?? "Something went wrong.")
-          : done
-            ? `${modelName} downloaded successfully. You're all set.`
-            : `${downloadedGb} GB of ${totalGb} GB`;
+      : phase === "error"
+        ? (errorMessage ?? "Something went wrong.")
+        : done
+          ? `${modelName} downloaded successfully. You're all set.`
+          : `${downloadedGb} GB of ${totalGb} GB`;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.ink.background }}>
+      <View className="flex-row items-center px-5 pt-4">
+        <Pressable onPress={handleBack} className="h-8 w-8 items-center justify-center">
+          <Ionicons name="arrow-back" size={22} color="#FFFFFF" />
+        </Pressable>
+      </View>
+
       <View className="flex-1 items-center justify-center gap-8 px-8">
         {done ? (
           <View className="h-24 w-24 items-center justify-center rounded-full bg-success/20">
@@ -227,11 +174,9 @@ export default function DownloadModel() {
           <Text className="text-center text-h1 text-white">
             {done
               ? `${modelName} model ready`
-              : phase === "verifying"
-                ? `Verifying ${modelName} model`
-                : phase === "error"
-                  ? "Download failed"
-                  : `Downloading ${modelName} model`}
+              : phase === "error"
+                ? "Download failed"
+                : `Downloading ${modelName} model`}
           </Text>
           <Text className="text-center text-body-lg text-ink-secondary">{statusText}</Text>
         </View>
@@ -251,8 +196,7 @@ export default function DownloadModel() {
         <View className="w-full flex-row items-start gap-3 rounded-2xl bg-ink-surface p-4">
           <Ionicons name="information-circle-outline" size={20} color={colors.ink.textSecondary} />
           <Text className="flex-1 text-body-md text-ink-secondary">
-            You can keep using the app while this downloads. Recording works now — summaries will be ready
-            once this finishes.
+            You can keep using the app while this downloads — tap back anytime, we&apos;ll keep you posted.
           </Text>
         </View>
 
@@ -277,7 +221,7 @@ export default function DownloadModel() {
                 </Pressable>
               ) : null}
               <Text className="text-center text-caption text-ink-secondary">
-                {phase === "paused" ? "Download paused" : isWifiOnly ? "Downloading over Wi-Fi" : "Downloading"}
+                {phase === "paused" ? "Download paused" : activeDownload.wifiOnly ? "Downloading over Wi-Fi" : "Downloading"}
               </Text>
               <Pressable onPress={handleCancel} className="items-center py-1 active:opacity-70">
                 <Text className="text-center text-body-sm text-error">Cancel download</Text>

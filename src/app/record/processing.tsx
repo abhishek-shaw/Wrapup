@@ -20,6 +20,7 @@ import {
   generateMeetingTitle,
   type ExtractedActionItem,
 } from "@/services/llm";
+import { notifyModelNeededForSummary } from "@/services/notifications";
 import { resolveAudioFileUri } from "@/services/recording";
 import { useRecordingStore } from "@/store/recording";
 import { useSettingsStore } from "@/store/settings";
@@ -88,6 +89,14 @@ export default function Processing() {
               } catch (err) {
                 console.error("[LLM] title generation failed:", err);
               }
+            }
+
+            // No model was active, so the summarize/extract steps above were
+            // skipped entirely (see step 1/2 effects below) — let the user
+            // know there's a recording waiting on a model download, in case
+            // they've navigated away from this screen already.
+            if (!activeModelTier) {
+              notifyModelNeededForSummary(finalTitle).catch(() => {});
             }
 
             // Clears any action items from a prior run before re-inserting —

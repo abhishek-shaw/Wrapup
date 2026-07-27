@@ -20,21 +20,32 @@ import { initLlama, releaseAllLlama, type LlamaContext } from "llama.rn";
 
 import type { ModelTier } from "@/types/models";
 import { getModelFile } from "./models";
-
-const N_CTX = 4096;
+import { LLM_PROFILES } from "./profiles";
 
 let cachedContext: Promise<LlamaContext> | null = null;
 let cachedTier: ModelTier | null = null;
 
-function getContext(tier: ModelTier): Promise<LlamaContext> {
+async function getContext(tier: ModelTier): Promise<LlamaContext> {
   if (cachedContext && cachedTier === tier) {
     return cachedContext;
   }
+  // Switching tiers is now a first-class, frequent action (multiple models
+  // can be kept downloaded and switched between) — release whatever's
+  // currently loaded first, so switching back and forth never holds two
+  // multi-GB native contexts in memory at once.
+  if (cachedContext) {
+    await releaseAllLlama();
+    cachedContext = null;
+    cachedTier = null;
+  }
   const modelFile = getModelFile(tier);
+  const profile = LLM_PROFILES[tier];
   const promise = initLlama({
     model: modelFile.uri,
-    n_ctx: N_CTX,
-    n_threads: 4,
+    n_ctx: profile.nCtx,
+    n_threads: profile.nThreads,
+    n_batch: profile.nBatch,
+    use_mlock: profile.useMlock,
     ctx_shift: true,
   }).catch((error: unknown) => {
     cachedContext = null;
@@ -53,20 +64,41 @@ export async function releaseLlmContext(): Promise<void> {
   cachedTier = null;
 }
 
+/** Every tier's temperatureOffset is negative (see profiles.ts) — this is a
+ * meeting-notes app, and a model that gets "creative" is a model that states
+ * things nobody said, so every tier is nudged toward more deterministic
+ * output, without touching the per-task base temperatures below (action
+ * items still run colder than free-form chat, tier or no tier). Smaller
+ * models are less well-calibrated and drift more easily, so Fast gets the
+ * strongest pull. Clamped to stay non-negative. */
+function applyTemperatureOffset(baseTemperature: number, tier: ModelTier): number {
+  return Math.max(0, baseTemperature + LLM_PROFILES[tier].temperatureOffset);
+}
+
+// Meeting notes must never state something the transcript didn't actually
+// say. Shared verbatim across summary/action-items/chat — a title carries no
+// factual risk, so generateMeetingTitle is exempt — rather than each function
+// hand-writing its own slightly different phrasing: one forceful, consistent
+// instruction is what the weaker Fast tier especially needs to reliably follow.
+const GROUNDING_RULE =
+  "Base your answer only on the transcript provided. If something was not said, do not mention it, guess at it, or assume it — leave it out entirely rather than invent it.";
+
 // Keep transcripts from blowing the context window before ctx_shift even
 // gets a chance to kick in — this is a rough char-based cap, not a token
 // count, intentionally conservative (~3 chars/token is a safe underestimate
 // for English). Reserves room for the system/user prompt wrapper and for
 // the completion itself, so prompt + instructions + response actually fit
-// N_CTX — a transcript sized to fill N_CTX on its own leaves no budget for
-// the model's answer, which for JSON output means it gets cut off mid-object
-// and silently fails to parse (see extractActionItems) rather than just
-// reading as a truncated sentence the way a cut-off summary would.
+// the tier's n_ctx — a transcript sized to fill it on its own leaves no
+// budget for the model's answer, which for JSON output means it gets cut
+// off mid-object and silently fails to parse (see extractActionItems)
+// rather than just reading as a truncated sentence the way a cut-off
+// summary would.
 const CHARS_PER_TOKEN = 3;
 const PROMPT_WRAPPER_TOKENS = 300; // system instructions + "Meeting transcript:" wrapper
 
-function truncateTranscript(transcriptText: string, maxCompletionTokens: number): string {
-  const maxTranscriptChars = (N_CTX - PROMPT_WRAPPER_TOKENS - maxCompletionTokens) * CHARS_PER_TOKEN;
+function truncateTranscript(transcriptText: string, tier: ModelTier, maxCompletionTokens: number): string {
+  const nCtx = LLM_PROFILES[tier].nCtx;
+  const maxTranscriptChars = (nCtx - PROMPT_WRAPPER_TOKENS - maxCompletionTokens) * CHARS_PER_TOKEN;
   if (transcriptText.length <= maxTranscriptChars) return transcriptText;
   // Keep the tail: meetings tend to wrap up decisions/action items near the
   // end, and this is a stopgap until real chunking exists (see AGENTS.md).
@@ -90,6 +122,7 @@ function resolveCompletionText(result: { content: string; text: string }): strin
 
 export async function generateMeetingSummary(transcriptText: string, tier: ModelTier): Promise<string> {
   const context = await getContext(tier);
+  const profile = LLM_PROFILES[tier];
   const result = await context.completion({
     jinja: true,
     messages: [
@@ -98,11 +131,11 @@ export async function generateMeetingSummary(transcriptText: string, tier: Model
         content:
           "You are Wrapup, an on-device assistant that writes concise meeting summaries. " +
           "Write plain prose (no headings, no bullet points), 3-6 sentences, covering what was " +
-          "discussed and any decisions made. Do not invent details that aren't in the transcript.",
+          `discussed and any decisions made. ${GROUNDING_RULE}`,
       },
       {
         role: "user",
-        content: `Meeting transcript:\n\n${truncateTranscript(transcriptText, 400)}`,
+        content: `Meeting transcript:\n\n${truncateTranscript(transcriptText, tier, 400)}`,
       },
     ],
     // No chain-of-thought needed for a short summary — and leaving thinking
@@ -110,7 +143,9 @@ export async function generateMeetingSummary(transcriptText: string, tier: Model
     // extraction to fail below, so it's turned off consistently here too.
     enable_thinking: false,
     n_predict: 400,
-    temperature: 0.3,
+    temperature: applyTemperatureOffset(0.2, tier),
+    top_p: profile.topP,
+    min_p: profile.minP,
   });
   return resolveCompletionText(result);
 }
@@ -121,6 +156,7 @@ export async function generateMeetingSummary(transcriptText: string, tier: Model
  * distillation of what the meeting was about, and keeps this call cheap. */
 export async function generateMeetingTitle(summaryText: string, tier: ModelTier): Promise<string> {
   const context = await getContext(tier);
+  const profile = LLM_PROFILES[tier];
   const result = await context.completion({
     jinja: true,
     messages: [
@@ -138,7 +174,9 @@ export async function generateMeetingTitle(summaryText: string, tier: ModelTier)
     ],
     enable_thinking: false,
     n_predict: 32,
-    temperature: 0.3,
+    temperature: applyTemperatureOffset(0.3, tier),
+    top_p: profile.topP,
+    min_p: profile.minP,
   });
   return resolveCompletionText(result)
     .replace(/^["']|["']$/g, "")
@@ -178,6 +216,7 @@ const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}/;
 
 export async function extractActionItems(transcriptText: string, tier: ModelTier): Promise<ExtractedActionItem[]> {
   const context = await getContext(tier);
+  const profile = LLM_PROFILES[tier];
   const result = await context.completion({
     jinja: true,
     messages: [
@@ -186,13 +225,14 @@ export async function extractActionItems(transcriptText: string, tier: ModelTier
         content:
           "You are Wrapup, an on-device assistant that extracts action items from meeting transcripts. " +
           "Only include concrete tasks someone committed to — not general discussion topics. " +
+          `${GROUNDING_RULE} ` +
           'For each item, set "ownerHint" to the person\'s name if the transcript names one, otherwise "". ' +
           'Set "dueDate" to an ISO 8601 date (YYYY-MM-DD) only if the transcript states or clearly implies one, otherwise "". ' +
           "Return an empty items array if there are no clear action items. Respond with JSON only.",
       },
       {
         role: "user",
-        content: `Meeting transcript:\n\n${truncateTranscript(transcriptText, 500)}`,
+        content: `Meeting transcript:\n\n${truncateTranscript(transcriptText, tier, 500)}`,
       },
     ],
     // `enable_thinking` defaults to true whenever jinja is enabled, which
@@ -206,7 +246,9 @@ export async function extractActionItems(transcriptText: string, tier: ModelTier
     response_format: { type: "json_schema", json_schema: { schema: ACTION_ITEMS_SCHEMA } },
     enable_thinking: true,
     n_predict: 500,
-    temperature: 0.1,
+    temperature: applyTemperatureOffset(0.1, tier),
+    top_p: profile.topP,
+    min_p: profile.minP,
   });
 
   const rawOutput = resolveCompletionText(result);
@@ -258,6 +300,7 @@ export async function generateChatReply(params: {
 }): Promise<string> {
   const { tier, transcriptText, meetingTitle, history } = params;
   const context = await getContext(tier);
+  const profile = LLM_PROFILES[tier];
 
   const result = await context.completion({
     jinja: true,
@@ -266,14 +309,16 @@ export async function generateChatReply(params: {
         role: "system",
         content:
           `You are Wrapup, an on-device assistant answering questions about one specific meeting: "${meetingTitle}". ` +
-          "Answer only using the transcript below — if it doesn't contain the answer, say so plainly rather than guessing. " +
-          `Keep answers brief and conversational.\n\nMeeting transcript:\n\n${truncateTranscript(transcriptText, 400)}`,
+          `${GROUNDING_RULE} If the transcript doesn't contain the answer, say so plainly rather than guessing. ` +
+          `Keep answers brief and conversational.\n\nMeeting transcript:\n\n${truncateTranscript(transcriptText, tier, 400)}`,
       },
       ...history.map((turn) => ({ role: turn.role, content: turn.text })),
     ],
     enable_thinking: true,
     n_predict: 400,
-    temperature: 0.4,
+    temperature: applyTemperatureOffset(0.3, tier),
+    top_p: profile.topP,
+    min_p: profile.minP,
   });
 
   return resolveCompletionText(result);
