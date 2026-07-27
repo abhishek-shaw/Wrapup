@@ -2,11 +2,16 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 
 import { getCalendarPermissionStatus, requestCalendarPermission } from "@/services/calendar";
+import { releaseLlmContext } from "@/services/llm";
+import { deleteModel, isModelDownloaded } from "@/services/llm/models";
 import { getNotificationPermissionStatus, requestNotificationPermission } from "@/services/notifications";
+import type { ModelTier } from "@/types/models";
 
 const ONBOARDING_COMPLETE_KEY = "wrapup.onboardingComplete";
 const REMIND_ABOUT_TODOS_KEY = "wrapup.remindAboutOpenTodos";
 const REMINDER_LEAD_TIME_KEY = "wrapup.reminderLeadTimeMinutes";
+const ACTIVE_MODEL_TIER_KEY = "wrapup.activeModelTier";
+const DOWNLOAD_OVER_WIFI_ONLY_KEY = "wrapup.downloadOverWifiOnly";
 
 /** How long before a todo's due date its reminder fires. 0 means "right at
  * the due date" — i.e. the moment it becomes overdue. */
@@ -46,9 +51,23 @@ type SettingsState = {
   loadReminderPreferences: () => Promise<void>;
   setRemindAboutOpenTodos: (enabled: boolean) => Promise<void>;
   setReminderLeadTimeMinutes: (minutes: number) => Promise<void>;
+
+  /**
+   * The tier that's currently downloaded and ready to run — null if none is.
+   * Not the same as "the user's last selection mid-download"; that's owned
+   * locally by the choose-model/download-model screens until the download
+   * actually finishes, at which point they call setActiveModelTier.
+   */
+  activeModelTier: ModelTier | null;
+  downloadOverWifiOnly: boolean;
+  loadModelSettings: () => Promise<void>;
+  setActiveModelTier: (tier: ModelTier | null) => Promise<void>;
+  setDownloadOverWifiOnly: (enabled: boolean) => Promise<void>;
+  /** Deletes the active model's file on disk and clears activeModelTier. */
+  deleteActiveModel: () => Promise<void>;
 };
 
-export const useSettingsStore = create<SettingsState>((set) => ({
+export const useSettingsStore = create<SettingsState>((set, get) => ({
   onboardingComplete: null,
   loadOnboardingStatus: async () => {
     const value = await AsyncStorage.getItem(ONBOARDING_COMPLETE_KEY);
@@ -104,5 +123,44 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   setReminderLeadTimeMinutes: async (minutes: number) => {
     await AsyncStorage.setItem(REMINDER_LEAD_TIME_KEY, minutes.toString());
     set({ reminderLeadTimeMinutes: minutes });
+  },
+
+  activeModelTier: null,
+  downloadOverWifiOnly: true,
+  loadModelSettings: async () => {
+    const [storedTier, storedWifiOnly] = await Promise.all([
+      AsyncStorage.getItem(ACTIVE_MODEL_TIER_KEY),
+      AsyncStorage.getItem(DOWNLOAD_OVER_WIFI_ONLY_KEY),
+    ]);
+    // Re-check against the filesystem rather than trusting the cached
+    // value blindly — same reasoning as calendarConnected/notificationsEnabled
+    // above: the file could've been cleared by the OS or by hand since we
+    // last wrote this preference.
+    const tier = storedTier as ModelTier | null;
+    const stillDownloaded = tier !== null && isModelDownloaded(tier);
+    set({
+      activeModelTier: stillDownloaded ? tier : null,
+      downloadOverWifiOnly: storedWifiOnly === null ? true : storedWifiOnly === "true",
+    });
+  },
+  setActiveModelTier: async (tier: ModelTier | null) => {
+    if (tier === null) {
+      await AsyncStorage.removeItem(ACTIVE_MODEL_TIER_KEY);
+    } else {
+      await AsyncStorage.setItem(ACTIVE_MODEL_TIER_KEY, tier);
+    }
+    set({ activeModelTier: tier });
+  },
+  setDownloadOverWifiOnly: async (enabled: boolean) => {
+    await AsyncStorage.setItem(DOWNLOAD_OVER_WIFI_ONLY_KEY, enabled.toString());
+    set({ downloadOverWifiOnly: enabled });
+  },
+  deleteActiveModel: async () => {
+    const tier = get().activeModelTier;
+    if (!tier) return;
+    await releaseLlmContext();
+    deleteModel(tier);
+    await AsyncStorage.removeItem(ACTIVE_MODEL_TIER_KEY);
+    set({ activeModelTier: null });
   },
 }));

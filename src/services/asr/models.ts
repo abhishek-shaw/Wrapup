@@ -17,6 +17,8 @@
  */
 import { Directory, File, Paths } from "expo-file-system";
 
+import { throttleDownloadProgress } from "@/lib/throttle-progress";
+
 const WHISPER_MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
 const WHISPER_MODEL_FILENAME = "ggml-base.bin";
 // Approximate — used only to show a progress percentage before the first
@@ -51,7 +53,7 @@ function isFilePresent(file: File, minBytes: number): boolean {
 export function areAsrModelsReady(): boolean {
   return (
     isFilePresent(getWhisperModelFile(), WHISPER_MODEL_SIZE_BYTES * 0.9) &&
-    isFilePresent(getVadModelFile(), VAD_MODEL_SIZE_BYTES * 0.1)
+    isFilePresent(getVadModelFile(), VAD_MODEL_SIZE_BYTES * 0.9)
   );
 }
 
@@ -71,9 +73,10 @@ async function downloadOne(
     // createDownloadTask fails if the destination already exists.
     destination.delete();
   }
+  const reportProgress = throttleDownloadProgress(onProgress);
   const task = File.createDownloadTask(url, destination, {
     onProgress: ({ bytesWritten, totalBytes }) => {
-      onProgress(bytesWritten, totalBytes > 0 ? totalBytes : expectedSizeBytes);
+      reportProgress(bytesWritten, totalBytes > 0 ? totalBytes : expectedSizeBytes);
     },
   });
   const result = await task.downloadAsync();

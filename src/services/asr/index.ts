@@ -19,6 +19,7 @@
 import { initWhisper, initWhisperVad, releaseAllWhisper, releaseAllWhisperVad } from "whisper.rn";
 
 import { getVadModelFile, getWhisperModelFile } from "./models";
+import { withTimeout } from "@/lib/timeout";
 import type { TranscriptSegment } from "@/types/models";
 
 // Adjacent VAD speech segments closer together than this are merged into a
@@ -31,6 +32,13 @@ const MAX_WINDOW_SECONDS = 28;
 // How much of the previous window's text to carry forward as a prompt, so
 // wording/vocabulary stays consistent across a merge boundary.
 const PROMPT_CONTEXT_CHARS = 200;
+
+// Generous but bounded — a native call that's genuinely still working
+// shouldn't hit these, but a wedged JSI bridge or a corrupt model file must
+// never leave the processing screen spinning forever with no way out.
+const MODEL_INIT_TIMEOUT_MS = 60_000;
+const VAD_DETECT_TIMEOUT_MS = 60_000;
+const TRANSCRIBE_WINDOW_TIMEOUT_MS = 60_000;
 
 /**
  * Caches the promise returned by `init`, clearing the cache if it rejects so
@@ -112,14 +120,40 @@ export async function transcribeMeetingAudio(
   audioFilePath: string,
   options?: { onProgress?: (fraction: number) => void },
 ): Promise<TranscribeMeetingResult> {
-  const [whisperContext, vadContext] = await Promise.all([whisperContextCache.get(), vadContextCache.get()]);
+  let whisperContext: Awaited<ReturnType<typeof initWhisper>>;
+  let vadContext: Awaited<ReturnType<typeof initWhisperVad>>;
+  try {
+    [whisperContext, vadContext] = await Promise.all([
+      withTimeout(whisperContextCache.get(), MODEL_INIT_TIMEOUT_MS, "Whisper model load"),
+      withTimeout(vadContextCache.get(), MODEL_INIT_TIMEOUT_MS, "VAD model load"),
+    ]);
+  } catch (error) {
+    // A stuck native init leaves the cached promise permanently pending —
+    // reset both so the next attempt (e.g. the user retrying from Today)
+    // starts a fresh native context instead of awaiting the same wedged one
+    // forever, which is what turns one bad init into a permanently-stuck
+    // recording with no way to recover short of reinstalling the app.
+    whisperContextCache.reset();
+    vadContextCache.reset();
+    throw error;
+  }
 
-  const rawSpeechSegments = await vadContext.detectSpeech(audioFilePath, {
-    threshold: 0.5,
-    minSpeechDurationMs: 250,
-    minSilenceDurationMs: 300,
-    speechPadMs: 200,
-  });
+  let rawSpeechSegments: Awaited<ReturnType<typeof vadContext.detectSpeech>>;
+  try {
+    rawSpeechSegments = await withTimeout(
+      vadContext.detectSpeech(audioFilePath, {
+        threshold: 0.5,
+        minSpeechDurationMs: 250,
+        minSilenceDurationMs: 300,
+        speechPadMs: 200,
+      }),
+      VAD_DETECT_TIMEOUT_MS,
+      "Speech detection",
+    );
+  } catch (error) {
+    vadContextCache.reset();
+    throw error;
+  }
 
   if (rawSpeechSegments.length === 0) {
     options?.onProgress?.(1);
@@ -135,19 +169,29 @@ export async function transcribeMeetingAudio(
     t1: segment.t1 / 100,
   }));
 
-  const windows = mergeSpeechSegments(speechSegments);
+  // Defensive: a window with zero/negative duration (shouldn't happen given
+  // VAD's minSpeechDurationMs, but merging math is exactly the kind of thing
+  // that grows an edge case) would hand whisper.cpp a nonsensical duration —
+  // drop those rather than risk an undefined native decode.
+  const windows = mergeSpeechSegments(speechSegments).filter((window) => window.t1 - window.t0 > 0);
   const segments: TranscriptSegment[] = [];
   let previousText = "";
 
   for (let i = 0; i < windows.length; i++) {
     const window = windows[i];
-    const { promise } = whisperContext.transcribe(audioFilePath, {
-      language: "auto",
-      offset: Math.round(window.t0 * 1000),
-      duration: Math.round((window.t1 - window.t0) * 1000),
-      prompt: previousText ? previousText.slice(-PROMPT_CONTEXT_CHARS) : undefined,
-    });
-    const result = await promise;
+    let result: Awaited<ReturnType<typeof whisperContext.transcribe>["promise"]>;
+    try {
+      const { promise } = whisperContext.transcribe(audioFilePath, {
+        language: "auto",
+        offset: Math.round(window.t0 * 1000),
+        duration: Math.round((window.t1 - window.t0) * 1000),
+        prompt: previousText ? previousText.slice(-PROMPT_CONTEXT_CHARS) : undefined,
+      });
+      result = await withTimeout(promise, TRANSCRIBE_WINDOW_TIMEOUT_MS, "Transcribing a segment");
+    } catch (error) {
+      whisperContextCache.reset();
+      throw error;
+    }
 
     const text = result.result.trim();
     previousText = text;

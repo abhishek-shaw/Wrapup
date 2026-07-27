@@ -1,7 +1,7 @@
 <div align="center">
   <img src="assets/images/mascot-logo.png" width="120" alt="Wrapup app icon" />
 
-  # Wrapup
+  <h1>Wrapup</h1>
 
   **A privacy-first, fully offline voice & meeting notes app.**
 
@@ -24,9 +24,9 @@
   and that deserves to be treated seriously, not buried in a toggle.
 - **On-device transcription** — Whisper (`whisper.rn`) runs the audio-to-text
   pipeline locally. No cloud ASR, ever.
-- **On-device summarization & action items** — a local LLM (`llama.rn`)
-  turns a transcript into meeting notes and a checklist of action items.
-- **Per-meeting AI chat** — ask follow-up questions about a specific meeting
+- **On-device summarization & action items** *(planned)* — a local LLM (`llama.rn`)
+  will turn transcripts into meeting notes and a checklist of action items.
+- **Per-meeting AI chat** *(planned)* — ask follow-up questions about a specific meeting
   ("what did we decide about the launch date?") and get answers grounded in
   that meeting's transcript, generated entirely offline.
 - **Todos that don't get lost** — action items are linked back to their
@@ -45,11 +45,12 @@
 > scrubber), the SQLite-backed data layer for meetings/todos/summaries/chat,
 > the Library search, todo reminders (local notifications, configurable lead
 > time), and the full onboarding/settings UI are implemented and working
-> end-to-end today. The on-device ASR (`whisper.rn`) and LLM (`llama.rn`)
-> inference pipelines — transcription, summarization, and meeting chat — are
-> designed and scaffolded (see [Architecture](#architecture) below) but not
-> yet wired up; those screens currently run against local seed/mock data
-> while that integration is built out.
+> end-to-end today. The on-device ASR (`whisper.rn`) is fully integrated —
+> recordings are transcribed locally with voice-activity detection. The LLM
+> (`llama.rn`) pipeline — summarization and meeting chat — is designed and
+> scaffolded (see [Architecture](#architecture) below) but not yet wired up;
+> those screens currently run against local seed/mock data while that
+> integration is built out.
 
 ## Privacy, by construction
 
@@ -102,7 +103,7 @@ transcripts, or summaries.
 | Calendar | expo-calendar (read-only) |
 | Recording & playback | expo-audio |
 | Local notifications | expo-notifications |
-| On-device ASR *(planned)* | whisper.rn |
+| On-device ASR | whisper.rn |
 | On-device LLM *(planned)* | llama.rn |
 
 This app **requires a custom Expo dev client** — it cannot run inside Expo
@@ -111,7 +112,7 @@ whisper.rn/llama.rn are integrated) that aren't part of the Expo Go sandbox.
 
 ## Architecture
 
-```
+```text
 src/
   app/              # Expo Router screens — routes only, no business logic
   components/       # Reusable UI (EventCard, RecordButton, TodoItem, ...)
@@ -122,7 +123,7 @@ src/
     calendar/       #   expo-calendar wrapper + meeting-detection heuristic
     recording/      #   expo-audio wrapper (capture + playback)
     notifications/  #   expo-notifications wrapper (todo reminders)
-    asr/            #   (planned) whisper.rn wrapper, model loading, chunking
+    asr/            #   whisper.rn wrapper, model loading, VAD, chunking
     llm/            #   (planned) llama.rn wrapper, prompts, JSON parsing
   store/            # Zustand stores (recording state, todos, settings)
   types/            # Shared TypeScript types
@@ -146,7 +147,7 @@ secrets for any of its core features.
 ### Install & run
 
 ```bash
-git clone <this-repo>
+git clone https://github.com/abhishek-shaw/Wrapup.git
 cd Wrapup
 npm install
 

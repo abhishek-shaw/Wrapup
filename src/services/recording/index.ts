@@ -134,19 +134,19 @@ export function getCaptureStatus(): RecorderState | null {
 }
 
 /** Pauses the active capture in place — the recorder stays alive (unlike stopCapture), just not writing audio. */
-export function pauseCapture(): void {
+export async function pauseCapture(): Promise<void> {
   if (!activeRecorder) {
     throw new Error("No recording in progress");
   }
-  activeRecorder.pause();
+  await activeRecorder.pause();
 }
 
 /** Resumes a capture previously paused with pauseCapture(). */
-export function resumeCapture(): void {
+export async function resumeCapture(): Promise<void> {
   if (!activeRecorder) {
     throw new Error("No recording in progress");
   }
-  activeRecorder.record();
+  await activeRecorder.record();
 }
 
 export type MeetingAudioPlayback = {
@@ -205,7 +205,7 @@ function createFallbackWaveform(durationSeconds: number): number[] {
  * rather than only at the moment it was recorded. This makes old rows
  * self-healing with no DB migration needed.
  */
-function resolveAudioFileUri(storedUri: string): string {
+export function resolveAudioFileUri(storedUri: string): string {
   const marker = "/Documents/";
   const markerIndex = storedUri.indexOf(marker);
   if (markerIndex === -1) return storedUri;
