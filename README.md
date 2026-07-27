@@ -24,9 +24,11 @@
   and that deserves to be treated seriously, not buried in a toggle.
 - **On-device transcription** — Whisper (`whisper.rn`) runs the audio-to-text
   pipeline locally. No cloud ASR, ever.
-- **On-device summarization & action items** *(planned)* — a local LLM (`llama.rn`)
-  will turn transcripts into meeting notes and a checklist of action items.
-- **Per-meeting AI chat** *(planned)* — ask follow-up questions about a specific meeting
+- **On-device summarization & action items** — a local LLM (`llama.rn`) turns
+  transcripts into a plain-language summary and a JSON-schema-constrained
+  list of action items (owner/due-date extracted only when the transcript
+  states them explicitly).
+- **Per-meeting AI chat** — ask follow-up questions about a specific meeting
   ("what did we decide about the launch date?") and get answers grounded in
   that meeting's transcript, generated entirely offline.
 - **Todos that don't get lost** — action items are linked back to their
@@ -40,17 +42,17 @@
   during onboarding, download it with a resumable, Wi-Fi-aware progress bar,
   and switch or delete it later from Settings.
 
-> **Current build status:** calendar integration, consent-gated recording,
-> local audio capture/playback (with a real audio-reactive waveform
-> scrubber), the SQLite-backed data layer for meetings/todos/summaries/chat,
-> the Library search, todo reminders (local notifications, configurable lead
-> time), and the full onboarding/settings UI are implemented and working
-> end-to-end today. The on-device ASR (`whisper.rn`) is fully integrated —
-> recordings are transcribed locally with voice-activity detection. The LLM
-> (`llama.rn`) pipeline — summarization and meeting chat — is designed and
-> scaffolded (see [Architecture](#architecture) below) but not yet wired up;
-> those screens currently run against local seed/mock data while that
-> integration is built out.
+> **Current build status:** the full pipeline runs end-to-end today —
+> calendar integration, consent-gated recording, local audio capture/playback
+> (with a real audio-reactive waveform scrubber), on-device transcription
+> (`whisper.rn`), on-device summarization/action-item extraction/meeting
+> chat (`llama.rn`), the SQLite-backed data layer for meetings/todos/
+> summaries/chat, Library full-text search, todo reminders (local
+> notifications, configurable lead time), and the full onboarding/model-
+> download/settings UI. The screenshots below are captured from that build
+> running on an iOS simulator, not design mockups. A few Settings toggles
+> are still cosmetic-only and not yet wired to real behavior: **auto-record
+> detected meetings**, **require Face ID to open**, and **export my data**.
 
 ## Privacy, by construction
 
@@ -64,30 +66,34 @@ transcripts, or summaries.
 
 ## Screens
 
+Real screenshots from the custom dev client running on an iOS simulator —
+not design mockups. The meeting summary/chat screenshots below are from an
+actual recording, transcribed and summarized on-device by the Fast-tier
+model; everything else uses the repo's local dev seed data.
+
 <table>
 <tr>
-<td align="center"><img src="assets/designs/1_welcome_screen.png" width="200" alt="Welcome screen" /><br/>Welcome</td>
-<td align="center"><img src="assets/designs/2_onboarding_screen.png" width="200" alt="Onboarding screen" /><br/>Onboarding</td>
-<td align="center"><img src="assets/designs/3_premission_screen.png" width="200" alt="Permissions screen" /><br/>Permissions</td>
-<td align="center"><img src="assets/designs/4_home_screen_today.png" width="200" alt="Today screen" /><br/>Today</td>
+<td align="center"><img src="assets/screenshots/1_welcome.png" width="200" alt="Welcome screen" /><br/>Welcome</td>
+<td align="center"><img src="assets/screenshots/2_onboarding.png" width="200" alt="Onboarding screen" /><br/>Onboarding</td>
+<td align="center"><img src="assets/screenshots/3_permissions.png" width="200" alt="Permissions screen" /><br/>Permissions</td>
+<td align="center"><img src="assets/screenshots/4_today.png" width="200" alt="Today screen" /><br/>Today</td>
 </tr>
 <tr>
-<td align="center"><img src="assets/designs/5_empty_state_screen.png" width="200" alt="Empty state" /><br/>Empty state</td>
-<td align="center"><img src="assets/designs/6_library_screen.png" width="200" alt="Library screen" /><br/>Library</td>
-<td align="center"><img src="assets/designs/7_todos_screen.png" width="200" alt="Todos screen" /><br/>Todos</td>
-<td align="center"><img src="assets/designs/8_settings_screen.png" width="200" alt="Settings screen" /><br/>Settings</td>
+<td align="center"><img src="assets/screenshots/5_empty_state.png" width="200" alt="Empty state" /><br/>Empty state</td>
+<td align="center"><img src="assets/screenshots/6_library.png" width="200" alt="Library screen" /><br/>Library</td>
+<td align="center"><img src="assets/screenshots/7_todos.png" width="200" alt="Todos screen" /><br/>Todos</td>
+<td align="center"><img src="assets/screenshots/8_settings.png" width="200" alt="Settings screen" /><br/>Settings</td>
 </tr>
 <tr>
-<td align="center"><img src="assets/designs/11_meeting_recording_concent_screen.png" width="200" alt="Recording consent screen" /><br/>Record consent</td>
-<td align="center"><img src="assets/designs/13_meeting_recording_progress_screen.png" width="200" alt="Recording in progress screen" /><br/>Recording</td>
-<td align="center"><img src="assets/designs/12_meeting_processing_screen.png" width="200" alt="Processing screen" /><br/>Processing</td>
-<td align="center"><img src="assets/designs/14_meeting_summary_screen.png" width="200" alt="Meeting summary screen" /><br/>Summary</td>
+<td align="center"><img src="assets/screenshots/11_record_consent.png" width="200" alt="Recording consent screen" /><br/>Record consent</td>
+<td align="center"><img src="assets/screenshots/13_recording_progress.png" width="200" alt="Recording in progress screen" /><br/>Recording</td>
+<td align="center"><img src="assets/screenshots/12_processing.png" width="200" alt="Processing screen" /><br/>Processing</td>
+<td align="center"><img src="assets/screenshots/14_meeting_summary.png" width="200" alt="Meeting summary screen" /><br/>Summary</td>
 </tr>
 <tr>
-<td align="center"><img src="assets/designs/15_meeting_ai_chat_screen.png" width="200" alt="Meeting AI chat screen" /><br/>Meeting chat</td>
-<td align="center"><img src="assets/designs/9_settings_choose_model.png" width="200" alt="Choose model screen" /><br/>Choose model</td>
-<td align="center"><img src="assets/designs/10_settings_download_model.png" width="200" alt="Download model screen" /><br/>Download model</td>
-<td align="center"><img src="assets/designs/0_design_system.png" width="200" alt="Design system reference" /><br/>Design system</td>
+<td align="center"><img src="assets/screenshots/15_meeting_chat.png" width="200" alt="Meeting AI chat screen" /><br/>Meeting chat</td>
+<td align="center"><img src="assets/screenshots/9_choose_model.png" width="200" alt="Choose model screen" /><br/>Choose model</td>
+<td align="center"><img src="assets/screenshots/10_download_model.png" width="200" alt="Download model screen" /><br/>Download model</td>
 </tr>
 </table>
 
@@ -104,11 +110,11 @@ transcripts, or summaries.
 | Recording & playback | expo-audio |
 | Local notifications | expo-notifications |
 | On-device ASR | whisper.rn |
-| On-device LLM *(planned)* | llama.rn |
+| On-device LLM | llama.rn |
 
 This app **requires a custom Expo dev client** — it cannot run inside Expo
-Go, because it depends on native modules (and will depend on more once
-whisper.rn/llama.rn are integrated) that aren't part of the Expo Go sandbox.
+Go, because it depends on native modules (whisper.rn, llama.rn, and others)
+that aren't part of the Expo Go sandbox.
 
 ## Architecture
 
@@ -124,14 +130,15 @@ src/
     recording/      #   expo-audio wrapper (capture + playback)
     notifications/  #   expo-notifications wrapper (todo reminders)
     asr/            #   whisper.rn wrapper, model loading, VAD, chunking
-    llm/            #   (planned) llama.rn wrapper, prompts, JSON parsing
+    llm/            #   llama.rn wrapper — summary/action-items/chat prompts,
+                     #   JSON-schema-constrained parsing
   store/            # Zustand stores (recording state, todos, settings)
   types/            # Shared TypeScript types
 ```
 
 Every native module is wrapped in a typed `services/` boundary — the rest of
-the app never talks to `expo-audio`, `expo-calendar`, or (eventually)
-`whisper.rn`/`llama.rn` directly.
+the app never talks to `expo-audio`, `expo-calendar`, `whisper.rn`, or
+`llama.rn` directly.
 
 ## Getting started
 
