@@ -40,9 +40,11 @@ function describeMeeting(meeting: Meeting) {
     badge:
       meeting.status === "ready"
         ? ({ label: "Recorded", variant: "recorded" } as const)
-        : meeting.status === "recording" || meeting.status === "processing"
-          ? ({ label: "Processing", variant: "upcoming" } as const)
-          : undefined,
+        : meeting.status === "failed"
+          ? ({ label: "Failed — tap to retry", variant: "failed" } as const)
+          : meeting.status === "recording" || meeting.status === "processing"
+            ? ({ label: "Processing", variant: "upcoming" } as const)
+            : undefined,
   };
 }
 
@@ -150,8 +152,19 @@ export default function Today() {
             renderItem={({ item }) => {
               if (item.kind === "meeting") {
                 const { subtitle, badge } = describeMeeting(item.meeting);
+                // A meeting that never finished processing (app killed mid-transcription,
+                // a transcribe error, etc.) has no summary/transcript to show on the detail
+                // screen — send it back to the processing screen instead, which retries
+                // transcription from scratch on mount rather than leaving it stuck forever.
+                const needsRetry = item.meeting.status === "processing" || item.meeting.status === "failed";
                 return (
-                  <Pressable onPress={() => router.push(`/meeting/${item.meeting.id}`)}>
+                  <Pressable
+                    onPress={() =>
+                      router.push(
+                        needsRetry ? `/record/processing?id=${item.meeting.id}` : `/meeting/${item.meeting.id}`,
+                      )
+                    }
+                  >
                     <EventCard
                       title={item.meeting.title}
                       subtitle={subtitle}

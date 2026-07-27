@@ -53,7 +53,8 @@
         {
           "color": "#EF9F27"
         }
-      ]
+      ],
+      "llama.rn"
     ],
     "experiments": {
       "typedRoutes": true,

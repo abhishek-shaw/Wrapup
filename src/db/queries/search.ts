@@ -23,6 +23,21 @@ export async function searchMeetingIds(query: string): Promise<string[]> {
   return rows.map((row) => row.meeting_id);
 }
 
+/** Removes a meeting's row from the search index — this virtual FTS5 table
+ * has no real foreign key, so deleting a meeting doesn't clean this up on
+ * its own the way transcripts/summaries do via ON DELETE CASCADE. */
+export async function removeMeetingFromIndex(meetingId: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync("DELETE FROM meeting_search WHERE meeting_id = ?;", [meetingId]);
+}
+
+/** Updates just the indexed title, e.g. after a rename — cheaper than
+ * re-running indexMeeting, which would need the summary/transcript text too. */
+export async function updateSearchTitle(meetingId: string, title: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync("UPDATE meeting_search SET title = ? WHERE meeting_id = ?;", [title, meetingId]);
+}
+
 export async function indexMeeting(input: {
   meetingId: string;
   title: string;

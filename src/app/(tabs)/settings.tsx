@@ -4,14 +4,23 @@ import React, { useEffect, useState } from "react";
 import { Alert, Pressable, SafeAreaView, ScrollView, Switch, Text, View } from "react-native";
 
 import { SettingRow } from "@/components/setting-row";
+import { LLM_MODEL_SPECS } from "@/services/llm/models";
 import { REMINDER_LEAD_TIME_OPTIONS, useSettingsStore } from "@/store/settings";
 import { useTodosStore } from "@/store/todos";
 import { colors } from "@/theme";
+
+const MODEL_NAMES = {
+  fast: "Fast",
+  balanced: "Balanced",
+  best_quality: "Best quality",
+} as const;
 
 export default function Settings() {
   const router = useRouter();
   const [autoRecord, setAutoRecord] = useState(true);
   const [requireFaceId, setRequireFaceId] = useState(false);
+  const activeModelTier = useSettingsStore((state) => state.activeModelTier);
+  const deleteActiveModel = useSettingsStore((state) => state.deleteActiveModel);
   const calendarConnected = useSettingsStore((state) => state.calendarConnected);
   const loadCalendarStatus = useSettingsStore((state) => state.loadCalendarStatus);
   const connectCalendar = useSettingsStore((state) => state.connectCalendar);
@@ -58,6 +67,20 @@ export default function Settings() {
     );
   };
 
+  const modelSizeGb = activeModelTier ? (LLM_MODEL_SPECS[activeModelTier].sizeBytes / 1e9).toFixed(2) : null;
+
+  const handleDeleteModel = () => {
+    if (!activeModelTier || !modelSizeGb) return;
+    Alert.alert(
+      "Delete model?",
+      `Summarization and meeting chat won't work until you download a model again. Recording and transcription aren't affected.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: `Delete, free up ${modelSizeGb} GB`, style: "destructive", onPress: () => deleteActiveModel() },
+      ],
+    );
+  };
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.ink.background }}>
       <ScrollView className="flex-1 px-5 pt-4" contentContainerClassName="gap-5 pb-8">
@@ -73,25 +96,46 @@ export default function Settings() {
         <View className="gap-2">
           <Text className="px-1 text-caption text-ink-secondary">ON-DEVICE MODEL</Text>
           <View className="rounded-2xl bg-ink-surface">
-            <View className="border-b border-white/10">
+            {activeModelTier ? (
+              <>
+                <View className="border-b border-white/10">
+                  <SettingRow
+                    icon="hardware-chip-outline"
+                    title={MODEL_NAMES[activeModelTier]}
+                    description={`${modelSizeGb} GB · downloaded`}
+                    control={
+                      <Pressable
+                        onPress={() => router.push("/settings/choose-model")}
+                        className="rounded-xl border border-white/20 px-4 py-2 active:opacity-70"
+                      >
+                        <Text className="text-body-sm text-white">Switch</Text>
+                      </Pressable>
+                    }
+                  />
+                </View>
+                <Pressable
+                  onPress={handleDeleteModel}
+                  className="flex-row items-center gap-3 px-4 py-4 active:opacity-70"
+                >
+                  <Ionicons name="trash-outline" size={20} color={colors.semantic.error} />
+                  <Text className="text-h3 text-error">Delete model, free up {modelSizeGb} GB</Text>
+                </Pressable>
+              </>
+            ) : (
               <SettingRow
                 icon="hardware-chip-outline"
-                title="Balanced"
-                description="2.4 GB · downloaded"
+                title="No model downloaded"
+                description="Summaries and meeting chat need this. Recording still works without it."
                 control={
                   <Pressable
                     onPress={() => router.push("/settings/choose-model")}
-                    className="rounded-xl border border-white/20 px-4 py-2 active:opacity-70"
+                    className="rounded-xl bg-amber px-4 py-2 active:opacity-80"
                   >
-                    <Text className="text-body-sm text-white">Switch</Text>
+                    <Text className="text-body-sm text-mascot-features">Download</Text>
                   </Pressable>
                 }
               />
-            </View>
-            <Pressable className="flex-row items-center gap-3 px-4 py-4 active:opacity-70">
-              <Ionicons name="trash-outline" size={20} color={colors.semantic.error} />
-              <Text className="text-h3 text-error">Delete model, free up 2.4 GB</Text>
-            </Pressable>
+            )}
           </View>
         </View>
 
