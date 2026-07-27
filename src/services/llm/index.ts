@@ -18,8 +18,8 @@
  */
 import { initLlama, releaseAllLlama, type LlamaContext } from "llama.rn";
 
-import { getModelFile } from "./models";
 import type { ModelTier } from "@/types/models";
+import { getModelFile } from "./models";
 
 const N_CTX = 4096;
 
@@ -56,14 +56,36 @@ export async function releaseLlmContext(): Promise<void> {
 // Keep transcripts from blowing the context window before ctx_shift even
 // gets a chance to kick in — this is a rough char-based cap, not a token
 // count, intentionally conservative (~3 chars/token is a safe underestimate
-// for English) so the prompt + instructions + response still fit N_CTX.
-const MAX_TRANSCRIPT_CHARS = N_CTX * 3;
+// for English). Reserves room for the system/user prompt wrapper and for
+// the completion itself, so prompt + instructions + response actually fit
+// N_CTX — a transcript sized to fill N_CTX on its own leaves no budget for
+// the model's answer, which for JSON output means it gets cut off mid-object
+// and silently fails to parse (see extractActionItems) rather than just
+// reading as a truncated sentence the way a cut-off summary would.
+const CHARS_PER_TOKEN = 3;
+const PROMPT_WRAPPER_TOKENS = 300; // system instructions + "Meeting transcript:" wrapper
 
-function truncateTranscript(transcriptText: string): string {
-  if (transcriptText.length <= MAX_TRANSCRIPT_CHARS) return transcriptText;
+function truncateTranscript(transcriptText: string, maxCompletionTokens: number): string {
+  const maxTranscriptChars = (N_CTX - PROMPT_WRAPPER_TOKENS - maxCompletionTokens) * CHARS_PER_TOKEN;
+  if (transcriptText.length <= maxTranscriptChars) return transcriptText;
   // Keep the tail: meetings tend to wrap up decisions/action items near the
   // end, and this is a stopgap until real chunking exists (see AGENTS.md).
-  return `[...earlier portion of the transcript omitted...]\n\n${transcriptText.slice(-MAX_TRANSCRIPT_CHARS)}`;
+  return `[...earlier portion of the transcript omitted...]\n\n${transcriptText.slice(-maxTranscriptChars)}`;
+}
+
+// Matches leaked chat-template role-header tokens, e.g. Llama 3.x's
+// `<|start_header_id|>assistant<|end_header_id|>` or ChatML's `<|im_start|>assistant`.
+// `content` is supposed to already have these stripped, but that filtering isn't
+// reliable for every model/template (confirmed: this app's "Fast" tier leaks its
+// Llama 3.2 header into `content` itself, not just the `text` fallback below).
+const LEADING_CHAT_TEMPLATE_TOKENS = /^(?:<\|[^|>]*\|>\s*)+/;
+
+/** `content` (reasoning/tool-call filtered) should be the right field to use, but
+ * falls back to the raw `text` field in case a model leaves it empty, and strips
+ * any leading chat-template tokens either field might still be carrying. */
+function resolveCompletionText(result: { content: string; text: string }): string {
+  const raw = (result.content || result.text).trim();
+  return raw.replace(LEADING_CHAT_TEMPLATE_TOKENS, "").trim();
 }
 
 export async function generateMeetingSummary(transcriptText: string, tier: ModelTier): Promise<string> {
@@ -80,13 +102,48 @@ export async function generateMeetingSummary(transcriptText: string, tier: Model
       },
       {
         role: "user",
-        content: `Meeting transcript:\n\n${truncateTranscript(transcriptText)}`,
+        content: `Meeting transcript:\n\n${truncateTranscript(transcriptText, 400)}`,
       },
     ],
+    // No chain-of-thought needed for a short summary — and leaving thinking
+    // on (the default whenever jinja is enabled) is what caused action-item
+    // extraction to fail below, so it's turned off consistently here too.
+    enable_thinking: false,
     n_predict: 400,
     temperature: 0.3,
   });
-  return result.content.trim();
+  return resolveCompletionText(result);
+}
+
+/** Short, human-readable title for a manual dictation recorded without one
+ * (calendar meetings already have a title from the calendar event). Runs off
+ * the summary rather than the full transcript — it's already a concise
+ * distillation of what the meeting was about, and keeps this call cheap. */
+export async function generateMeetingTitle(summaryText: string, tier: ModelTier): Promise<string> {
+  const context = await getContext(tier);
+  const result = await context.completion({
+    jinja: true,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are Wrapup, an on-device assistant that titles meetings. Read the summary below and write a " +
+          'short, plain title for the meeting: at most 10 words, no quotes, no trailing punctuation, no ' +
+          'prefixes like "Meeting about" or "Title:". Respond with just the title text.',
+      },
+      {
+        role: "user",
+        content: `Meeting summary:\n\n${summaryText}`,
+      },
+    ],
+    enable_thinking: false,
+    n_predict: 32,
+    temperature: 0.3,
+  });
+  return resolveCompletionText(result)
+    .replace(/^["']|["']$/g, "")
+    .replace(/[.!]+$/, "")
+    .trim();
 }
 
 export type ExtractedActionItem = {
@@ -135,16 +192,34 @@ export async function extractActionItems(transcriptText: string, tier: ModelTier
       },
       {
         role: "user",
-        content: `Meeting transcript:\n\n${truncateTranscript(transcriptText)}`,
+        content: `Meeting transcript:\n\n${truncateTranscript(transcriptText, 500)}`,
       },
     ],
+    // `enable_thinking` defaults to true whenever jinja is enabled, which
+    // was the actual bug here: the model prepended a `<think>...</think>`
+    // reasoning block before the grammar-constrained JSON, and llama.rn's
+    // content/reasoning_content split failed to strip it for this model's
+    // template — `content` came back empty, and falling back to the raw
+    // `text` field surfaced the unstripped `<think>` tag, which isn't valid
+    // JSON either. Turning thinking off skips the reasoning block entirely,
+    // so the model goes straight to the JSON grammar.
     response_format: { type: "json_schema", json_schema: { schema: ACTION_ITEMS_SCHEMA } },
+    enable_thinking: true,
     n_predict: 500,
     temperature: 0.1,
   });
 
+  const rawOutput = resolveCompletionText(result);
+  // Belt-and-suspenders beyond the leading-token strip above: the schema always
+  // produces a single top-level JSON object, so slicing between the outermost
+  // braces discards anything a chat template still leaked before or after it
+  // (e.g. a trailing `<|eot_id|>`) without needing to know that template's exact tokens.
+  const jsonStart = rawOutput.indexOf("{");
+  const jsonEnd = rawOutput.lastIndexOf("}");
+  const jsonText = jsonStart !== -1 && jsonEnd > jsonStart ? rawOutput.slice(jsonStart, jsonEnd + 1) : rawOutput;
+
   try {
-    const parsed = JSON.parse(result.content) as { items?: unknown };
+    const parsed = JSON.parse(jsonText) as { items?: unknown };
     if (!Array.isArray(parsed.items)) return [];
     return parsed.items
       .filter((item): item is { text: string; ownerHint: string; dueDate: string } => {
@@ -160,9 +235,10 @@ export async function extractActionItems(transcriptText: string, tier: ModelTier
         ownerHint: item.ownerHint.trim() || null,
         dueDate: ISO_DATE_PATTERN.test(item.dueDate) ? item.dueDate.slice(0, 10) : null,
       }));
-  } catch {
-    // Local-only debug log (no transcript content) — see AGENTS.md Privacy & Network Rules.
-    console.error("[LLM] failed to parse action items JSON");
+  } catch (err) {
+    // Local-only debug log (no transcript content) — see AGENTS.md Privacy & Network Rules.\
+    console.error(rawOutput);
+    console.error("[LLM] failed to parse action items JSON:", err instanceof Error ? err.message : err);
     return [];
   }
 }
@@ -191,13 +267,14 @@ export async function generateChatReply(params: {
         content:
           `You are Wrapup, an on-device assistant answering questions about one specific meeting: "${meetingTitle}". ` +
           "Answer only using the transcript below — if it doesn't contain the answer, say so plainly rather than guessing. " +
-          `Keep answers brief and conversational.\n\nMeeting transcript:\n\n${truncateTranscript(transcriptText)}`,
+          `Keep answers brief and conversational.\n\nMeeting transcript:\n\n${truncateTranscript(transcriptText, 400)}`,
       },
       ...history.map((turn) => ({ role: turn.role, content: turn.text })),
     ],
+    enable_thinking: true,
     n_predict: 400,
     temperature: 0.4,
   });
 
-  return result.content.trim();
+  return resolveCompletionText(result);
 }

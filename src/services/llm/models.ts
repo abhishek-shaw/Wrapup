@@ -14,6 +14,7 @@ import { Directory, DownloadTask, File, Paths } from "expo-file-system";
 import * as Network from "expo-network";
 
 import { sha256HexOfStream } from "@/lib/sha256";
+import { throttleDownloadProgress } from "@/lib/throttle-progress";
 import type { ModelTier } from "@/types/models";
 
 export type LlmModelSpec = {
@@ -104,8 +105,10 @@ export function createModelDownloadTask(
   if (destination.exists) {
     destination.delete();
   }
+  const reportProgress = throttleDownloadProgress(onProgress);
   return File.createDownloadTask(spec.url, destination, {
-    onProgress: ({ bytesWritten, totalBytes }) => onProgress(bytesWritten, totalBytes > 0 ? totalBytes : spec.sizeBytes),
+    onProgress: ({ bytesWritten, totalBytes }) =>
+      reportProgress(bytesWritten, totalBytes > 0 ? totalBytes : spec.sizeBytes),
   });
 }
 

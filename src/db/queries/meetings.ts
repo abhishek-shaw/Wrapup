@@ -84,6 +84,15 @@ export async function createMeeting(input: {
   );
 }
 
+export async function updateMeetingTitle(id: string, title: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync("UPDATE meetings SET title = ?, updated_at = ? WHERE id = ?;", [
+    title,
+    new Date().toISOString(),
+    id,
+  ]);
+}
+
 export async function updateMeetingStatus(id: string, status: RecordingStatus): Promise<void> {
   const db = await getDb();
   await db.runAsync("UPDATE meetings SET status = ?, updated_at = ? WHERE id = ?;", [
@@ -93,7 +102,13 @@ export async function updateMeetingStatus(id: string, status: RecordingStatus): 
   ]);
 }
 
-/** Deletes a meeting and all its dependent rows (transcript, chat, todo links) via the schema's ON DELETE rules. */
+/** Deletes a meeting row. Transcript, summary, and chat history cascade via
+ * the schema's ON DELETE CASCADE. Todos do NOT — they use ON DELETE SET NULL
+ * so manually-added todos survive their linked meeting being deleted — so a
+ * caller that wants a meeting's action items gone too (see the meeting
+ * detail screen's delete action) must call deleteTodosForMeeting explicitly
+ * first. The audio file on disk and the meeting_search FTS row are likewise
+ * outside SQLite's reach and need their own explicit cleanup. */
 export async function deleteMeeting(id: string): Promise<void> {
   const db = await getDb();
   await db.runAsync("DELETE FROM meetings WHERE id = ?;", [id]);

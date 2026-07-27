@@ -19,12 +19,12 @@ const TIERS: {
     tier: "fast",
     title: "Fast",
     description: "Quicker summaries, good for short meetings. Best on older phones.",
+    recommended: true,
   },
   {
     tier: "balanced",
     title: "Balanced",
     description: "The best mix of quality and speed for most meetings.",
-    recommended: true,
   },
   {
     tier: "best_quality",
@@ -49,7 +49,7 @@ export default function ChooseModel() {
   // doesn't stall on a multi-GB download before the user can do anything.
   // Balanced stays the default when reached from Settings, matching its
   // "Recommended" badge below.
-  const [selected, setSelected] = useState<ModelTier>(activeModelTier ?? (origin === "onboarding" ? "fast" : "balanced"));
+  const [selected, setSelected] = useState<ModelTier>(activeModelTier ?? "fast");
 
   // Mark onboarding complete the moment this step is reached rather than
   // waiting for a download to finish or for the user to explicitly skip —
@@ -126,7 +126,7 @@ export default function ChooseModel() {
           </Pressable>
           <Pressable onPress={handleSkip}>
             <Text className="text-center text-caption text-ink-secondary">
-              Or skip for now — you can download a model anytime from settings
+              Or Click Here to skip for now — you can download a model anytime from settings
             </Text>
           </Pressable>
         </View>

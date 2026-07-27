@@ -205,7 +205,7 @@ function createFallbackWaveform(durationSeconds: number): number[] {
  * rather than only at the moment it was recorded. This makes old rows
  * self-healing with no DB migration needed.
  */
-function resolveAudioFileUri(storedUri: string): string {
+export function resolveAudioFileUri(storedUri: string): string {
   const marker = "/Documents/";
   const markerIndex = storedUri.indexOf(marker);
   if (markerIndex === -1) return storedUri;

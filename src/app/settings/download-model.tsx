@@ -1,8 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Image } from "expo-image";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import * as Network from "expo-network";
 import type { DownloadTask } from "expo-file-system";
+import { Image } from "expo-image";
+import * as Network from "expo-network";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import { Alert, Pressable, SafeAreaView, Text, View } from "react-native";
 

@@ -6,15 +6,21 @@ import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, SafeAreaView, Text, View } from "react-native";
 
 import { images } from "@/constants/images";
-import { getMeeting, updateMeetingStatus } from "@/db/queries/meetings";
+import { getMeeting, updateMeetingStatus, updateMeetingTitle } from "@/db/queries/meetings";
 import { indexMeeting } from "@/db/queries/search";
 import { upsertSummary } from "@/db/queries/summaries";
-import { createTodo } from "@/db/queries/todos";
+import { createTodo, deleteTodosForMeeting } from "@/db/queries/todos";
 import { upsertTranscript } from "@/db/queries/transcripts";
 import { generateId } from "@/lib/id";
 import { transcribeMeetingAudio, type TranscribeMeetingResult } from "@/services/asr";
 import { ensureAsrModelsDownloaded } from "@/services/asr/models";
-import { extractActionItems, generateMeetingSummary, type ExtractedActionItem } from "@/services/llm";
+import {
+  extractActionItems,
+  generateMeetingSummary,
+  generateMeetingTitle,
+  type ExtractedActionItem,
+} from "@/services/llm";
+import { resolveAudioFileUri } from "@/services/recording";
 import { useRecordingStore } from "@/store/recording";
 import { useSettingsStore } from "@/store/settings";
 import { colors } from "@/theme";
@@ -60,6 +66,36 @@ export default function Processing() {
             if (summaryText) {
               await upsertSummary({ meetingId: id, summaryText, modelTier: activeModelTier });
             }
+
+            // Manual dictations start out titled "New recording" (calendar
+            // meetings already get a real title from the calendar event).
+            // Name it from the summary once there's one to work from — but
+            // only while it's still the placeholder, so this never clobbers
+            // a title the user already edited on a later reprocess.
+            let finalTitle = meeting.title;
+            if (
+              meeting.source === "manual_dictation" &&
+              meeting.title.trim().toLowerCase() === "new recording" &&
+              activeModelTier &&
+              summaryText
+            ) {
+              try {
+                const generatedTitle = await generateMeetingTitle(summaryText, activeModelTier);
+                if (generatedTitle) {
+                  finalTitle = generatedTitle;
+                  await updateMeetingTitle(id, generatedTitle);
+                }
+              } catch (err) {
+                console.error("[LLM] title generation failed:", err);
+              }
+            }
+
+            // Clears any action items from a prior run before re-inserting —
+            // this step also runs when reprocessing an already-"ready"
+            // meeting (see the meeting detail screen's Reprocess button), so
+            // without this, every reprocess would duplicate action items
+            // rather than replace them.
+            await deleteTodosForMeeting(id);
             await Promise.all(
               actionItemsRef.current.map((item) =>
                 createTodo({
@@ -73,7 +109,7 @@ export default function Processing() {
             );
             await indexMeeting({
               meetingId: id,
-              title: meeting.title,
+              title: finalTitle,
               summaryText,
               transcriptText: transcript?.text ?? "",
             });
@@ -109,10 +145,18 @@ export default function Processing() {
           if (!meeting?.audioFilePath) {
             throw new Error("Recording has no audio file");
           }
+          // The stored path embeds the app's container UUID at record time,
+          // which changes on every native rebuild/reinstall during
+          // development — re-anchor onto the current document directory
+          // before touching disk (see resolveAudioFileUri's docstring in
+          // services/recording for why), so reprocessing an older recording
+          // after a rebuild doesn't report a missing file that's actually
+          // sitting right there under the new container.
+          const resolvedAudioFilePath = resolveAudioFileUri(meeting.audioFilePath);
           // Catches an empty/truncated recording early with a clear reason,
           // rather than handing whisper.rn a file it can't meaningfully
           // decode and hoping the resulting failure is self-explanatory.
-          const audioFile = new File(meeting.audioFilePath);
+          const audioFile = new File(resolvedAudioFilePath);
           if (!audioFile.exists || audioFile.size < 1024) {
             throw new Error("The recording file is missing or empty");
           }
@@ -122,7 +166,7 @@ export default function Processing() {
           });
           if (isMounted) setModelDownloadFraction(null);
 
-          transcriptRef.current = await transcribeMeetingAudio(meeting.audioFilePath);
+          transcriptRef.current = await transcribeMeetingAudio(resolvedAudioFilePath);
           if (isMounted) setCurrentStep((prev) => prev + 1);
         } catch (err) {
           // Local-only debug log (no transcript/audio content involved) —

@@ -65,6 +65,14 @@ export async function createTodo(input: {
   );
 }
 
+/** Clears a meeting's action items before regenerating them (see the
+ * meeting detail screen's "Reprocess" action) — without this, reprocessing
+ * would append a second copy of every action item instead of replacing them. */
+export async function deleteTodosForMeeting(meetingId: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync("DELETE FROM todos WHERE meeting_id = ?;", [meetingId]);
+}
+
 export async function setTodoCompleted(id: string, completed: boolean): Promise<void> {
   const db = await getDb();
   await db.runAsync("UPDATE todos SET completed = ?, completed_at = ? WHERE id = ?;", [
