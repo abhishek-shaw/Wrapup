@@ -11,6 +11,7 @@ import java.io.RandomAccessFile
 
 private const val TIMEOUT_US = 10_000L
 private const val BITS_PER_SAMPLE = 16
+private const val DECODE_MAX_DURATION_MS = 120_000L
 
 /**
  * Decodes a compressed audio file (AAC/.m4a in practice — whatever this
@@ -68,21 +69,32 @@ class AudioTranscodeModule : Module() {
       throw CodedException("ERR_TRANSCODE_NO_DECODER", "No decoder available for $mime: ${e.message}", e)
     }
 
-    val pcmBytes: ByteArray
+    val cleanOutputPath = outputPath.removePrefix("file://")
+    val outputFile = File(cleanOutputPath)
+    val raf = RandomAccessFile(outputFile, "rw")
+
     try {
-      pcmBytes = drainDecoder(extractor, codec)
+      raf.setLength(0)
+      // Reserve WAV header space — we'll patch the size fields after decoding completes
+      writeWavHeader(raf, 0, targetSampleRate)
+
+      var totalPcmBytes = 0L
+      drainDecoderStreaming(extractor, codec, sourceSampleRate, sourceChannelCount, targetSampleRate) { chunk ->
+        raf.write(chunk)
+        totalPcmBytes += chunk.size
+      }
+
+      // Patch the RIFF and data chunk size fields
+      raf.seek(4)
+      raf.write(intToLeBytes((36 + totalPcmBytes).toInt()))
+      raf.seek(40)
+      raf.write(intToLeBytes(totalPcmBytes.toInt()))
     } finally {
+      raf.close()
       codec.stop()
       codec.release()
       extractor.release()
     }
-
-    val monoPcm = if (sourceChannelCount > 1) downmixToMono(pcmBytes, sourceChannelCount) else pcmBytes
-    val outputPcm =
-      if (sourceSampleRate != targetSampleRate) resampleMono16Bit(monoPcm, sourceSampleRate, targetSampleRate)
-      else monoPcm
-
-    writeWavFile(outputPath.removePrefix("file://"), outputPcm, targetSampleRate)
   }
 
   /** Finds the first audio track and its format, or null if the file has none. */
@@ -97,14 +109,30 @@ class AudioTranscodeModule : Module() {
     return null
   }
 
-  /** Feeds compressed samples in and collects decoded 16-bit PCM out, until end of stream. */
-  private fun drainDecoder(extractor: MediaExtractor, codec: MediaCodec): ByteArray {
+  /** Drains the decoder, processing and streaming each PCM chunk to the output callback. */
+  private fun drainDecoderStreaming(
+    extractor: MediaExtractor,
+    codec: MediaCodec,
+    sourceSampleRate: Int,
+    sourceChannelCount: Int,
+    targetSampleRate: Int,
+    onChunk: (ByteArray) -> Unit
+  ) {
     val bufferInfo = MediaCodec.BufferInfo()
-    val chunks = mutableListOf<ByteArray>()
     var sawInputEos = false
     var sawOutputEos = false
+    val startTime = System.currentTimeMillis()
 
     while (!sawOutputEos) {
+      val elapsed = System.currentTimeMillis() - startTime
+      if (elapsed > DECODE_MAX_DURATION_MS) {
+        throw CodedException(
+          "ERR_TRANSCODE_DECODE",
+          "Decoder exceeded maximum duration (${DECODE_MAX_DURATION_MS}ms)",
+          null
+        )
+      }
+
       if (!sawInputEos) {
         val inputIndex = codec.dequeueInputBuffer(TIMEOUT_US)
         if (inputIndex >= 0) {
@@ -126,11 +154,17 @@ class AudioTranscodeModule : Module() {
         if (bufferInfo.size > 0) {
           val outputBuffer = codec.getOutputBuffer(outputIndex)
             ?: throw CodedException("ERR_TRANSCODE_DECODE", "Decoder returned a null output buffer", null)
-          val chunk = ByteArray(bufferInfo.size)
+          val pcmChunk = ByteArray(bufferInfo.size)
           outputBuffer.position(bufferInfo.offset)
           outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
-          outputBuffer.get(chunk)
-          chunks.add(chunk)
+          outputBuffer.get(pcmChunk)
+
+          val monoChunk = if (sourceChannelCount > 1) downmixToMono(pcmChunk, sourceChannelCount) else pcmChunk
+          val outputChunk =
+            if (sourceSampleRate != targetSampleRate) resampleMono16Bit(monoChunk, sourceSampleRate, targetSampleRate)
+            else monoChunk
+
+          onChunk(outputChunk)
         }
         codec.releaseOutputBuffer(outputIndex, false)
         if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
@@ -138,15 +172,6 @@ class AudioTranscodeModule : Module() {
         }
       }
     }
-
-    val total = chunks.sumOf { it.size }
-    val result = ByteArray(total)
-    var offset = 0
-    for (chunk in chunks) {
-      chunk.copyInto(result, offset)
-      offset += chunk.size
-    }
-    return result
   }
 
   /** Averages interleaved N-channel 16-bit PCM down to mono. */
@@ -198,28 +223,23 @@ class AudioTranscodeModule : Module() {
     return output
   }
 
-  private fun writeWavFile(outputPath: String, pcm: ByteArray, sampleRate: Int) {
+  private fun writeWavHeader(raf: RandomAccessFile, dataSize: Int, sampleRate: Int) {
     val blockAlign = BITS_PER_SAMPLE / 8 // mono
     val byteRate = sampleRate * blockAlign
 
-    val file = File(outputPath)
-    RandomAccessFile(file, "rw").use { raf ->
-      raf.setLength(0)
-      raf.writeBytes("RIFF")
-      raf.write(intToLeBytes(36 + pcm.size))
-      raf.writeBytes("WAVE")
-      raf.writeBytes("fmt ")
-      raf.write(intToLeBytes(16)) // PCM fmt chunk size
-      raf.write(shortToLeBytes(1)) // AudioFormat = PCM
-      raf.write(shortToLeBytes(1)) // NumChannels = mono
-      raf.write(intToLeBytes(sampleRate))
-      raf.write(intToLeBytes(byteRate))
-      raf.write(shortToLeBytes(blockAlign.toShort()))
-      raf.write(shortToLeBytes(BITS_PER_SAMPLE.toShort()))
-      raf.writeBytes("data")
-      raf.write(intToLeBytes(pcm.size))
-      raf.write(pcm)
-    }
+    raf.writeBytes("RIFF")
+    raf.write(intToLeBytes(36 + dataSize))
+    raf.writeBytes("WAVE")
+    raf.writeBytes("fmt ")
+    raf.write(intToLeBytes(16)) // PCM fmt chunk size
+    raf.write(shortToLeBytes(1)) // AudioFormat = PCM
+    raf.write(shortToLeBytes(1)) // NumChannels = mono
+    raf.write(intToLeBytes(sampleRate))
+    raf.write(intToLeBytes(byteRate))
+    raf.write(shortToLeBytes(blockAlign.toShort()))
+    raf.write(shortToLeBytes(BITS_PER_SAMPLE.toShort()))
+    raf.writeBytes("data")
+    raf.write(intToLeBytes(dataSize))
   }
 
   private fun intToLeBytes(value: Int): ByteArray =

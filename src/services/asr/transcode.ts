@@ -20,14 +20,33 @@ import { File, Paths } from "expo-file-system";
 const TARGET_SAMPLE_RATE = 16000;
 
 /**
+ * Generates the temporary WAV file path synchronously without starting the
+ * decode operation. Used when the caller needs to know the path before
+ * starting a timeout-wrapped decode.
+ */
+export function getTempWavFilePath(): string {
+  const file = new File(Paths.cache, `asr-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`);
+  return file.uri;
+}
+
+/**
+ * Decodes a recorded meeting's audio (AAC/.m4a) into the specified output WAV
+ * file at 16kHz mono. Use `getTempWavFilePath()` to generate a path first, or
+ * call `decodeToTempWavFile()` for the combined allocate-then-decode flow.
+ */
+export async function decodeToWavFile(sourceUri: string, outputUri: string): Promise<void> {
+  await AudioTranscode.decodeToWavFile(sourceUri, TARGET_SAMPLE_RATE, outputUri);
+}
+
+/**
  * Decodes a recorded meeting's audio (AAC/.m4a) into a temporary 16kHz mono
  * PCM WAV file whisper.rn can read directly. Caller owns the returned file
  * and must delete it via `deleteTempWavFile` once transcription is done.
  */
 export async function decodeToTempWavFile(sourceUri: string): Promise<string> {
-  const file = new File(Paths.cache, `asr-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`);
-  await AudioTranscode.decodeToWavFile(sourceUri, TARGET_SAMPLE_RATE, file.uri);
-  return file.uri;
+  const wavFilePath = getTempWavFilePath();
+  await decodeToWavFile(sourceUri, wavFilePath);
+  return wavFilePath;
 }
 
 /** Deletes a temp WAV file produced by decodeToTempWavFile. Safe to call even if already gone. */

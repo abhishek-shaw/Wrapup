@@ -19,7 +19,7 @@
 import { initWhisper, initWhisperVad, releaseAllWhisper, releaseAllWhisperVad } from "whisper.rn";
 
 import { getVadModelFile, getWhisperModelFile } from "./models";
-import { decodeToTempWavFile, deleteTempWavFile } from "./transcode";
+import { decodeToWavFile, deleteTempWavFile, getTempWavFilePath } from "./transcode";
 import { withTimeout } from "@/lib/timeout";
 import type { TranscriptSegment } from "@/types/models";
 
@@ -143,12 +143,20 @@ export async function transcribeMeetingAudio(
   // whisper.rn's file-based transcribe()/detectSpeech() do no real audio
   // decoding — see transcode.ts. Recorded meetings are AAC (.m4a), so decode
   // to a temp 16kHz mono WAV once up front and point both VAD and transcribe
-  // at that instead of the original recording.
-  const wavFilePath = await withTimeout(
-    decodeToTempWavFile(audioFilePath),
-    TRANSCODE_TIMEOUT_MS,
-    "Decoding audio for transcription",
-  );
+  // at that instead of the original recording. Allocate the path synchronously
+  // before wrapping the decode in withTimeout so cleanup can run on timeout.
+  const wavFilePath = getTempWavFilePath();
+
+  try {
+    await withTimeout(
+      decodeToWavFile(audioFilePath, wavFilePath),
+      TRANSCODE_TIMEOUT_MS,
+      "Decoding audio for transcription",
+    );
+  } catch (error) {
+    deleteTempWavFile(wavFilePath);
+    throw error;
+  }
 
   try {
     let rawSpeechSegments: Awaited<ReturnType<typeof vadContext.detectSpeech>>;

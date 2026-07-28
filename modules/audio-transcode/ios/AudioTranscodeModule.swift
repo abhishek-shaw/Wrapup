@@ -58,7 +58,20 @@ public class AudioTranscodeModule: Module {
       throw StartReadingException(underlying: reader.error)
     }
 
-    var pcmData = Data()
+    let outputURL = URL(fileURLWithPath: stripFileScheme(outputPath))
+    guard let outputStream = OutputStream(url: outputURL, append: false) else {
+      throw WriteStreamException()
+    }
+    outputStream.open()
+    defer { outputStream.close() }
+
+    // Reserve WAV header space — we'll patch the size fields after decoding completes
+    var headerPlaceholder = Data(count: 44)
+    headerPlaceholder.withUnsafeMutableBytes { ptr in
+      outputStream.write(ptr.baseAddress!.assumingMemoryBound(to: UInt8.self), maxLength: 44)
+    }
+
+    var totalPcmBytes = 0
     while let sampleBuffer = trackOutput.copyNextSampleBuffer() {
       guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { continue }
       var length = 0
@@ -66,8 +79,14 @@ public class AudioTranscodeModule: Module {
       let status = CMBlockBufferGetDataPointer(
         blockBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer
       )
-      if status == kCMBlockBufferNoErr, let dataPointer = dataPointer {
-        pcmData.append(UnsafeBufferPointer(start: dataPointer, count: length))
+      if status == kCMBlockBufferNoErr, let dataPointer = dataPointer, length > 0 {
+        let bytesWritten = outputStream.write(
+          UnsafeRawPointer(dataPointer).assumingMemoryBound(to: UInt8.self),
+          maxLength: length
+        )
+        if bytesWritten > 0 {
+          totalPcmBytes += bytesWritten
+        }
       }
     }
 
@@ -75,21 +94,26 @@ public class AudioTranscodeModule: Module {
       throw ReadingFailedException(underlying: reader.error)
     }
 
-    try writeWavFile(pcmData: pcmData, sampleRate: targetSampleRate, outputPath: stripFileScheme(outputPath))
+    // Patch the WAV header with actual data size
+    try patchWavHeader(
+      filePath: outputURL.path,
+      dataSize: totalPcmBytes,
+      sampleRate: targetSampleRate
+    )
   }
 
   private func stripFileScheme(_ path: String) -> String {
     path.hasPrefix("file://") ? String(path.dropFirst(7)) : path
   }
 
-  private func writeWavFile(pcmData: Data, sampleRate: Int, outputPath: String) throws {
+  private func patchWavHeader(filePath: String, dataSize: Int, sampleRate: Int) throws {
     let bitsPerSample: UInt16 = 16
     let blockAlign: UInt16 = bitsPerSample / 8 // mono
     let byteRate = UInt32(sampleRate) * UInt32(blockAlign)
 
     var header = Data()
     header.append(contentsOf: "RIFF".utf8)
-    header.append(leBytes(UInt32(36 + pcmData.count)))
+    header.append(leBytes(UInt32(36 + dataSize)))
     header.append(contentsOf: "WAVE".utf8)
     header.append(contentsOf: "fmt ".utf8)
     header.append(leBytes(UInt32(16))) // PCM fmt chunk size
@@ -100,11 +124,14 @@ public class AudioTranscodeModule: Module {
     header.append(leBytes(blockAlign))
     header.append(leBytes(bitsPerSample))
     header.append(contentsOf: "data".utf8)
-    header.append(leBytes(UInt32(pcmData.count)))
+    header.append(leBytes(UInt32(dataSize)))
 
-    var fileData = header
-    fileData.append(pcmData)
-    try fileData.write(to: URL(fileURLWithPath: outputPath))
+    guard let fileHandle = FileHandle(forUpdatingAtPath: filePath) else {
+      throw WavHeaderPatchException()
+    }
+    defer { try? fileHandle.close() }
+    try fileHandle.seek(toOffset: 0)
+    try fileHandle.write(contentsOf: header)
   }
 
   private func leBytes(_ value: UInt32) -> Data {
@@ -151,4 +178,12 @@ internal class ReadingFailedException: Exception {
     super.init()
   }
   override var reason: String { "Reading failed: \(underlying?.localizedDescription ?? "unknown error")" }
+}
+
+internal class WriteStreamException: Exception {
+  override var reason: String { "Failed to create output stream for WAV file" }
+}
+
+internal class WavHeaderPatchException: Exception {
+  override var reason: String { "Failed to patch WAV header after writing PCM data" }
 }
