@@ -103,7 +103,8 @@ export default function RecordingConsent() {
         {permissionDenied ? (
           <View className="gap-2 rounded-2xl p-4" style={{ backgroundColor: "rgba(226,75,74,0.2)" }}>
             <Text className="text-body-md text-white">
-              Wrapup needs microphone access to record. Enable it for Wrapup in Settings, then try again.
+              Wrapup needs microphone (and notification, for the recording indicator) access to record.
+              Enable them for Wrapup in Settings, then try again.
             </Text>
             <Pressable onPress={() => Linking.openSettings()}>
               <Text className="text-body-md font-semibold text-white underline">Open Settings</Text>

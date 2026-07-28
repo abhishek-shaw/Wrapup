@@ -9,6 +9,7 @@ import { createMeeting } from "./queries/meetings";
 import { indexMeeting } from "./queries/search";
 import { upsertSummary } from "./queries/summaries";
 import { createTodo } from "./queries/todos";
+import { upsertTranscript } from "./queries/transcripts";
 import { generateId } from "@/lib/id";
 
 function daysAgoAt(days: number, hours: number, minutes: number): Date {
@@ -107,6 +108,20 @@ export async function seedDevData(): Promise<void> {
     });
 
     await upsertSummary({ meetingId: meeting.id, summaryText: meeting.summary, modelTier: "balanced" });
+
+    // Seed meetings skip the real ASR pipeline, so there's no natural
+    // transcript — reuse the summary as a stand-in. Without a transcripts
+    // row, meeting chat silently has nothing to generate a reply from (see
+    // the `!transcript?.text` guard in app/meeting/[id]/chat/index.tsx).
+    // A single segment (rather than none) is required too — TranscriptView
+    // reads an empty segments array as "no speech detected", regardless of
+    // `text`.
+    await upsertTranscript({
+      meetingId: meeting.id,
+      text: meeting.summary,
+      segments: [{ speakerLabel: null, startSeconds: 0, endSeconds: 0, text: meeting.summary }],
+      language: "en",
+    });
 
     for (const item of meeting.actionItems) {
       await createTodo({
