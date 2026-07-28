@@ -1,6 +1,7 @@
 import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
-import { SafeAreaView, SectionList, Text, View } from "react-native";
+import { SectionList, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { EmptyState } from "@/components/empty-state";
 import { TodoItem } from "@/components/todo-item";

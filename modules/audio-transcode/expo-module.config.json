@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android", "web"],
+  "apple": {
+    "modules": ["AudioTranscodeModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.audiotranscode.AudioTranscodeModule"]
+  }
+}

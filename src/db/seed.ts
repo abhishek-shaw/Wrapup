@@ -9,6 +9,7 @@ import { createMeeting } from "./queries/meetings";
 import { indexMeeting } from "./queries/search";
 import { upsertSummary } from "./queries/summaries";
 import { createTodo } from "./queries/todos";
+import { upsertTranscript } from "./queries/transcripts";
 import { generateId } from "@/lib/id";
 
 function daysAgoAt(days: number, hours: number, minutes: number): Date {
@@ -29,7 +30,28 @@ export async function seedDevData(): Promise<void> {
 
   const db = await getDb();
   const existing = await db.getFirstAsync<{ count: number }>("SELECT COUNT(*) as count FROM meetings;");
-  if (existing && existing.count > 0) return;
+
+  // Backfill transcripts for existing seeded meetings that don't have them yet
+  if (existing && existing.count > 0) {
+    const meetingsWithoutTranscripts = await db.getAllAsync<{ id: string; summary: string }>(
+      `SELECT m.id, s.summary_text as summary
+       FROM meetings m
+       LEFT JOIN summaries s ON m.id = s.meeting_id
+       LEFT JOIN transcripts t ON m.id = t.meeting_id
+       WHERE t.meeting_id IS NULL AND s.summary_text IS NOT NULL;`
+    );
+
+    for (const meeting of meetingsWithoutTranscripts) {
+      await upsertTranscript({
+        meetingId: meeting.id,
+        text: meeting.summary,
+        segments: [{ speakerLabel: null, startSeconds: 0, endSeconds: 0, text: meeting.summary }],
+        language: "en",
+      });
+    }
+
+    return;
+  }
 
   const meetings = [
     {
@@ -107,6 +129,20 @@ export async function seedDevData(): Promise<void> {
     });
 
     await upsertSummary({ meetingId: meeting.id, summaryText: meeting.summary, modelTier: "balanced" });
+
+    // Seed meetings skip the real ASR pipeline, so there's no natural
+    // transcript — reuse the summary as a stand-in. Without a transcripts
+    // row, meeting chat silently has nothing to generate a reply from (see
+    // the `!transcript?.text` guard in app/meeting/[id]/chat/index.tsx).
+    // A single segment (rather than none) is required too — TranscriptView
+    // reads an empty segments array as "no speech detected", regardless of
+    // `text`.
+    await upsertTranscript({
+      meetingId: meeting.id,
+      text: meeting.summary,
+      segments: [{ speakerLabel: null, startSeconds: 0, endSeconds: 0, text: meeting.summary }],
+      language: "en",
+    });
 
     for (const item of meeting.actionItems) {
       await createTodo({

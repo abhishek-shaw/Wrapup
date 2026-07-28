@@ -19,6 +19,7 @@
 import { initWhisper, initWhisperVad, releaseAllWhisper, releaseAllWhisperVad } from "whisper.rn";
 
 import { getVadModelFile, getWhisperModelFile } from "./models";
+import { decodeToWavFile, deleteTempWavFile, getTempWavFilePath } from "./transcode";
 import { withTimeout } from "@/lib/timeout";
 import type { TranscriptSegment } from "@/types/models";
 
@@ -39,6 +40,7 @@ const PROMPT_CONTEXT_CHARS = 200;
 const MODEL_INIT_TIMEOUT_MS = 60_000;
 const VAD_DETECT_TIMEOUT_MS = 60_000;
 const TRANSCRIBE_WINDOW_TIMEOUT_MS = 60_000;
+const TRANSCODE_TIMEOUT_MS = 120_000;
 
 /**
  * Caches the promise returned by `init`, clearing the cache if it rejects so
@@ -138,82 +140,104 @@ export async function transcribeMeetingAudio(
     throw error;
   }
 
-  let rawSpeechSegments: Awaited<ReturnType<typeof vadContext.detectSpeech>>;
+  // whisper.rn's file-based transcribe()/detectSpeech() do no real audio
+  // decoding — see transcode.ts. Recorded meetings are AAC (.m4a), so decode
+  // to a temp 16kHz mono WAV once up front and point both VAD and transcribe
+  // at that instead of the original recording. Allocate the path synchronously
+  // before wrapping the decode in withTimeout so cleanup can run on timeout.
+  const wavFilePath = getTempWavFilePath();
+
   try {
-    rawSpeechSegments = await withTimeout(
-      vadContext.detectSpeech(audioFilePath, {
-        threshold: 0.5,
-        minSpeechDurationMs: 250,
-        minSilenceDurationMs: 300,
-        speechPadMs: 200,
-      }),
-      VAD_DETECT_TIMEOUT_MS,
-      "Speech detection",
+    await withTimeout(
+      decodeToWavFile(audioFilePath, wavFilePath),
+      TRANSCODE_TIMEOUT_MS,
+      "Decoding audio for transcription",
     );
   } catch (error) {
-    vadContextCache.reset();
+    deleteTempWavFile(wavFilePath);
     throw error;
   }
 
-  if (rawSpeechSegments.length === 0) {
-    options?.onProgress?.(1);
-    return { text: "", segments: [], language: null };
-  }
-
-  // whisper.rn 0.4.x's VAD returns t0/t1 in centiseconds (whisper.cpp's
-  // internal `cs_to_samples` convention — hundredths of a second), not
-  // plain seconds. Convert once here so every downstream calculation
-  // (merging, offset/duration math) can just work in real seconds.
-  const speechSegments = rawSpeechSegments.map((segment) => ({
-    t0: segment.t0 / 100,
-    t1: segment.t1 / 100,
-  }));
-
-  // Defensive: a window with zero/negative duration (shouldn't happen given
-  // VAD's minSpeechDurationMs, but merging math is exactly the kind of thing
-  // that grows an edge case) would hand whisper.cpp a nonsensical duration —
-  // drop those rather than risk an undefined native decode.
-  const windows = mergeSpeechSegments(speechSegments).filter((window) => window.t1 - window.t0 > 0);
-  const segments: TranscriptSegment[] = [];
-  let previousText = "";
-
-  for (let i = 0; i < windows.length; i++) {
-    const window = windows[i];
-    let result: Awaited<ReturnType<typeof whisperContext.transcribe>["promise"]>;
+  try {
+    let rawSpeechSegments: Awaited<ReturnType<typeof vadContext.detectSpeech>>;
     try {
-      const { promise } = whisperContext.transcribe(audioFilePath, {
-        language: "auto",
-        offset: Math.round(window.t0 * 1000),
-        duration: Math.round((window.t1 - window.t0) * 1000),
-        prompt: previousText ? previousText.slice(-PROMPT_CONTEXT_CHARS) : undefined,
-      });
-      result = await withTimeout(promise, TRANSCRIBE_WINDOW_TIMEOUT_MS, "Transcribing a segment");
+      rawSpeechSegments = await withTimeout(
+        vadContext.detectSpeech(wavFilePath, {
+          threshold: 0.5,
+          minSpeechDurationMs: 250,
+          minSilenceDurationMs: 300,
+          speechPadMs: 200,
+        }),
+        VAD_DETECT_TIMEOUT_MS,
+        "Speech detection",
+      );
     } catch (error) {
-      whisperContextCache.reset();
+      vadContextCache.reset();
       throw error;
     }
 
-    const text = result.result.trim();
-    previousText = text;
-
-    if (text.length > 0) {
-      segments.push({
-        speakerLabel: null,
-        startSeconds: window.t0,
-        endSeconds: window.t1,
-        text,
-      });
+    if (rawSpeechSegments.length === 0) {
+      options?.onProgress?.(1);
+      return { text: "", segments: [], language: null };
     }
 
-    options?.onProgress?.((i + 1) / windows.length);
-  }
+    // whisper.rn 0.4.x's VAD returns t0/t1 in centiseconds (whisper.cpp's
+    // internal `cs_to_samples` convention — hundredths of a second), not
+    // plain seconds. Convert once here so every downstream calculation
+    // (merging, offset/duration math) can just work in real seconds.
+    const speechSegments = rawSpeechSegments.map((segment) => ({
+      t0: segment.t0 / 100,
+      t1: segment.t1 / 100,
+    }));
 
-  return {
-    // whisper.rn 0.4.x's TranscribeResult doesn't report detected language
-    // (that field wasn't added until 0.5.5 — see models.ts for why we're
-    // pinned to 0.4.3, well before both that and the JSI install mechanism).
-    text: segments.map((segment) => segment.text).join("\n\n"),
-    segments,
-    language: null,
-  };
+    // Defensive: a window with zero/negative duration (shouldn't happen given
+    // VAD's minSpeechDurationMs, but merging math is exactly the kind of thing
+    // that grows an edge case) would hand whisper.cpp a nonsensical duration —
+    // drop those rather than risk an undefined native decode.
+    const windows = mergeSpeechSegments(speechSegments).filter((window) => window.t1 - window.t0 > 0);
+    const segments: TranscriptSegment[] = [];
+    let previousText = "";
+
+    for (let i = 0; i < windows.length; i++) {
+      const window = windows[i];
+      let result: Awaited<ReturnType<typeof whisperContext.transcribe>["promise"]>;
+      try {
+        const { promise } = whisperContext.transcribe(wavFilePath, {
+          language: "auto",
+          offset: Math.round(window.t0 * 1000),
+          duration: Math.round((window.t1 - window.t0) * 1000),
+          prompt: previousText ? previousText.slice(-PROMPT_CONTEXT_CHARS) : undefined,
+        });
+        result = await withTimeout(promise, TRANSCRIBE_WINDOW_TIMEOUT_MS, "Transcribing a segment");
+      } catch (error) {
+        whisperContextCache.reset();
+        throw error;
+      }
+
+      const text = result.result.trim();
+      previousText = text;
+
+      if (text.length > 0) {
+        segments.push({
+          speakerLabel: null,
+          startSeconds: window.t0,
+          endSeconds: window.t1,
+          text,
+        });
+      }
+
+      options?.onProgress?.((i + 1) / windows.length);
+    }
+
+    return {
+      // whisper.rn 0.4.x's TranscribeResult doesn't report detected language
+      // (that field wasn't added until 0.5.5 — see models.ts for why we're
+      // pinned to 0.4.3, well before both that and the JSI install mechanism).
+      text: segments.map((segment) => segment.text).join("\n\n"),
+      segments,
+      language: null,
+    };
+  } finally {
+    deleteTempWavFile(wavFilePath);
+  }
 }

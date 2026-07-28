@@ -18,12 +18,14 @@
  * Network Rules. No function in this file makes a network call.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Platform } from "react-native";
 
 import {
   AudioModule,
   AudioQuality,
   IOSOutputFormat,
   getRecordingPermissionsAsync,
+  requestNotificationPermissionsAsync,
   requestRecordingPermissionsAsync,
   setAudioModeAsync,
   useAudioPlayer,
@@ -33,13 +35,22 @@ import {
   type RecordingOptions,
 } from "expo-audio";
 import { File, Paths } from "expo-file-system";
+import * as Device from "expo-device";
+
+// The iOS Simulator's AudioQueue can't initialize a hardware AAC encoder for
+// recording input at all — it fails immediately with "AudioCodecInitialize
+// failed" regardless of settings. This is a Simulator-only limitation (real
+// iPhones/iPads are unaffected); fall back to uncompressed Linear PCM there
+// so the record flow is still testable without a physical device. Device
+// and production builds are untouched.
+const IS_IOS_SIMULATOR = Platform.OS === "ios" && !Device.isDevice;
 
 // Mono/16kHz keeps files small and matches the sample rate on-device ASR
 // (whisper.rn) expects, while still sounding clear for a single-room meeting.
 // Stored in the document directory, not cache — this is irreplaceable user
 // audio, not a re-downloadable asset like the model files are.
 const RECORDING_OPTIONS: RecordingOptions = {
-  extension: ".m4a",
+  extension: IS_IOS_SIMULATOR ? ".wav" : ".m4a",
   sampleRate: 16000,
   numberOfChannels: 1,
   bitRate: 64000,
@@ -50,7 +61,7 @@ const RECORDING_OPTIONS: RecordingOptions = {
     audioEncoder: "aac",
   },
   ios: {
-    outputFormat: IOSOutputFormat.MPEG4AAC,
+    outputFormat: IS_IOS_SIMULATOR ? IOSOutputFormat.LINEARPCM : IOSOutputFormat.MPEG4AAC,
     audioQuality: AudioQuality.HIGH,
     linearPCMBitDepth: 16,
     linearPCMIsBigEndian: false,
@@ -69,9 +80,23 @@ export async function getMicrophonePermissionStatus(): Promise<boolean> {
   return granted;
 }
 
+/**
+ * Requests everything capture needs before `startCapture()` is called.
+ * Background recording (`enableBackgroundRecording`, see app.json) runs as a
+ * foreground service on Android, which requires a visible notification —
+ * so Android 13+ also requires POST_NOTIFICATIONS granted up front, or
+ * `prepareToRecordAsync()` rejects with ERR_NOTIFICATION_PERMISSIONS.
+ */
 export async function requestMicrophonePermission(): Promise<boolean> {
   const { granted } = await requestRecordingPermissionsAsync();
-  return granted;
+  if (!granted) return false;
+
+  if (Platform.OS === "android") {
+    const { granted: notificationsGranted } = await requestNotificationPermissionsAsync();
+    return notificationsGranted;
+  }
+
+  return true;
 }
 
 export function isCapturing(): boolean {
@@ -96,7 +121,15 @@ export async function startCapture(): Promise<void> {
   // eslint-disable-next-line import/namespace
   const recorder = new AudioModule.AudioRecorder(RECORDING_OPTIONS);
   try {
-    await recorder.prepareToRecordAsync();
+    // Platform-specific fields (RECORDING_OPTIONS.android/.ios — outputFormat,
+    // audioEncoder, etc.) only get flattened onto the native options by
+    // expo-audio's own prepareToRecordAsync wrapper (see its
+    // ExpoAudio.ts/createRecordingOptions). That wrapper only runs when
+    // options are passed here, not when they're only given to the
+    // constructor — passing them again is required, or Android silently
+    // falls back to its ancient AMR_NB/8kHz default regardless of the
+    // sampleRate/bitRate requested above.
+    await recorder.prepareToRecordAsync(RECORDING_OPTIONS);
     recorder.record();
     activeRecorder = recorder;
   } catch (error) {

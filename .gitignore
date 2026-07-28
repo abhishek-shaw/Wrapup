@@ -8,9 +8,15 @@ node_modules/
 dist/
 web-build/
 expo-env.d.ts
+nativewind-env.d.ts
 
 # Native
 .kotlin/
+
+# Native module build artifacts
+modules/**/build/
+modules/**/.gradle/
+modules/**/.cxx/
 *.orig.*
 *.jks
 *.p8
@@ -31,13 +37,15 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
 .env*.local
 
 # typescript
 *.tsbuildinfo
 
+# example app (standalone, not part of main project)
 example
 
-# generated native folders
+# generated native folders (run `npx expo prebuild` locally)
 /ios
 /android

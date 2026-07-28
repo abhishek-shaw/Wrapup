@@ -9,7 +9,8 @@ import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect, useState } from "react";
-import { Platform, SafeAreaView, View } from "react-native";
+import { Platform, View } from "react-native";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
 import { PersistentModelDownloadBanner } from "@/components/model-download-indicator";
 import { PersistentRecordingBanner } from "@/components/recording-indicator";
@@ -87,9 +88,9 @@ export default function RootLayout() {
   }
 
   return (
-    <>
+    <SafeAreaProvider>
       <Stack screenOptions={{ headerShown: false }} />
       <BannerContainer />
-    </>
+    </SafeAreaProvider>
   );
 }
